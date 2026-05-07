@@ -1,0 +1,48 @@
+# Build artifacts
+build/
+install/
+log/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ROS
+*.bag
+*.db3
+*.mcap
+
+# Temporary files
+*.tmp
+*.bak
+
+# Allow these files explicitly
+!*.py
+!*.sh
+!README.md
+
+# Allow everything in src/
+!src/
+!src/**
+
+# But ignore Python cache in src/
+src/**/__pycache__/
+src/**/*.pyc

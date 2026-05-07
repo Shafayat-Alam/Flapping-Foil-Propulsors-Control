@@ -1,4 +1,6 @@
 [console_scripts]
-CrabController2DOF = flapping_foil_propulsors_control.CrabController2DOF:main
-Dynamixcel_XW430_T200_interface = flapping_foil_propulsors_control.Dynamixcel_XW430_T200_interface:main
+Dynamixel_XW430_T200_interface = flapping_foil_propulsors_control.Dynamixel_XW430_T200_interface:main
+controller = flapping_foil_propulsors_control.controller:main
 crab = flapping_foil_propulsors_control.crab:main
+icm20948_interface = flapping_foil_propulsors_control.icm20948_interface:main
+stellarhd_interface = flapping_foil_propulsors_control.stellarhd_interface:main

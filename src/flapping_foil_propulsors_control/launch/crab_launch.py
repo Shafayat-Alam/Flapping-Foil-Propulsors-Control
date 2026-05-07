@@ -41,7 +41,7 @@ def generate_launch_description():
             parameters=[{
                 # Format: [[id, offset, set, min_limit, max_limit], ...]
                 # Placeholder limits - update with your actual mechanical constraints
-                'actuator_map': '[[3, 3.00, 1, -1.57, 1.57], [4, 3.42, 1, -3.14, 3.14]]',
+                'actuator_map': '[[3, 3.00, 1, -100, 100], [4, 3.42, 1, -100, 100]]',
                 'operating_mode': 'position',  # 'position' or 'velocity'
             }],
         ),

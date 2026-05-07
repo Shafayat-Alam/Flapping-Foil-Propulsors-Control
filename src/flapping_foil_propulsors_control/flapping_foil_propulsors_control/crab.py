@@ -45,8 +45,8 @@ import math
 import json
 from collections import deque
 
-# Import user-defined motion primitives
-from flapping_foil_propulsors_control.motion_primitives import UserMotionPrimitives
+# Import user-defined motion library
+from flapping_foil_propulsors_control.motion_library import MotionLibrary
 
 
 # ---------------------------------------------------------------------------
@@ -113,9 +113,9 @@ class CrabGaitEngine(Node):
         # Load actuator map from parameter
         self._load_actuator_map()
         
-        # Initialize user motion primitives
-        self.gaits = UserMotionPrimitives(self)
-        
+        # Initialize user motion library
+        self.gaits = MotionLibrary(self)
+
         # Queue calibration command at startup
         self.command_queue.append({
             'cmd_id':        0.0,
@@ -124,6 +124,9 @@ class CrabGaitEngine(Node):
             'freq':          1.0,
             'amp':           0.0,
             'phase':         0.0,
+            'freq_ratio':    1.0,
+            'amp_ratio':     1.0,
+            'phase_offset':  0.0,
             'cycles':        1.0,
             'sets':          list(self.set_map.keys()),
             'phases':        [0.0] * len(self.set_map),
@@ -220,7 +223,7 @@ class CrabGaitEngine(Node):
         if hasattr(self, 'startup_timer'):
             self.startup_timer.cancel()
     
-    def calibration(self, t: float, freq: float, amp: float, phase: float):
+    def calibration(self, t: float, freq: float, amp: float, phase: float, **kwargs):
         """
         Calibration function - moves all servos to their zero offset positions.
         Call with: func:[calibration] freq:[1.0] amp:[0.0] phase:[0.0] cycles:[1] sets:[1]

@@ -296,17 +296,19 @@ ros2 topic pub --once /robot_cmd std_msgs/String \
 
 ## Recording and Analysis (`recorder.py`)
 
-Automated data collection script for ROS2 bag recording, CSV extraction, and plot generation.
+Automated data collection script for ROS2 bag recording, CSV extraction, and plot generation organized by servo and command.
 
 **Features:**
 - Records all control topics (`robot_cmd`, `motion_cmd`, `joint_cmd`, `joint_feedback`, `telemetry`)
 - Supports both mcap and sqlite3 bag formats (auto-detects)
-- Extracts data to CSV files organized by topic
-- Generates smooth, publication-quality plots:
-  - Per-command plots (organized by `cmd_id`)
-  - Master plots (all data)
+- Extracts master CSVs for all topics
+- Generates CSV snippets per servo per command for focused analysis
+- Creates comprehensive plots:
+  - System-wide master plots (all topics, all servos combined)
+  - Per-servo master plots (all commands for one servo)
+  - Per-servo per-command plots (individual command execution)
+  - Goal vs actual position tracking
   - Positions, velocities, currents, voltages
-  - Goal vs actual tracking
 
 **Usage:**
 ```bash
@@ -319,34 +321,59 @@ python3 recorder.py session_name
 
 ```
 session_name/
-├── rosbag/                    # ROS2 bag files
-├── csv/                       # Extracted CSV data
+├── rosbag/                    # ROS2 bag files (mcap or sqlite3)
+├── csv/                       # Master CSV files (all data)
 │   ├── robot_cmd.csv
 │   ├── motion_cmd.csv
 │   ├── joint_cmd.csv
 │   ├── joint_feedback.csv
 │   └── telemetry.csv
-└── plots/                     # Generated plots
-    ├── master/                # All data
-    │   ├── positions.png
-    │   ├── velocities.png
-    │   ├── currents.png
-    │   └── voltages.png
-    └── cmd_N/                 # Per-command data
-        ├── positions.png
-        ├── velocities.png
-        ├── currents.png
-        └── voltages.png
+└── plots/
+    ├── master/
+    │   └── plots/            # System-wide plots (all servos combined)
+    │       ├── telemetry_all_positions.png
+    │       ├── telemetry_all_velocities.png
+    │       ├── telemetry_all_currents.png
+    │       ├── telemetry_all_voltages.png
+    │       ├── feedback_all_positions.png
+    │       ├── feedback_all_velocities.png
+    │       ├── feedback_all_currents.png
+    │       ├── feedback_all_voltages.png
+    │       ├── motion_cmd_ids.png
+    │       └── joint_cmd_length.png
+    ├── servo_3/
+    │   ├── master/
+    │   │   └── plots/        # All commands for servo 3
+    │   │       ├── servo_3_positions.png
+    │   │       ├── servo_3_velocities.png
+    │   │       ├── servo_3_currents.png
+    │   │       ├── servo_3_voltages.png
+    │   │       └── feedback_*.png
+    │   ├── cmd_0/
+    │   │   ├── csv/
+    │   │   │   └── telemetry_snippet.csv    # Just this servo, this command
+    │   │   └── plots/
+    │   │       ├── servo_3_cmd_0_positions.png
+    │   │       ├── servo_3_cmd_0_velocities.png
+    │   │       ├── servo_3_cmd_0_currents.png
+    │   │       └── servo_3_cmd_0_voltages.png
+    │   └── cmd_1/
+    │       ├── csv/
+    │       │   └── telemetry_snippet.csv
+    │       └── plots/
+    └── servo_4/
+        └── ... (same structure)
 ```
 
 **Plot Features:**
-- Smooth curves (linewidth 1.5, alpha 0.8)
-- Tab10 colormap for multi-servo plots
-- Dashed grid lines
-- Bold titles with consistent fonts
-- Tight bbox for clean edges
-- Per-command organization for detailed analysis
-- Master plots for system-wide overview
+- Simple scatter plots with point markers
+- Goal vs actual position overlay on telemetry plots
+- Legends on all plots for clarity
+- Time normalized to start at 0 ms
+- Per-servo organization for easy analysis
+- CSV snippets enable quick data inspection per command
+- System-wide master plots show overall behavior
+- Per-servo per-command plots isolate individual executions
 
 ---
 

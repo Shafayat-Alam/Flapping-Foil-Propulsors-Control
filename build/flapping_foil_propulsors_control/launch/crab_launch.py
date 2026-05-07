@@ -1,1 +1,0 @@
-/home/gingerstep/Desktop/flipper_code/flapping-foil-propulsors-control/src/flapping_foil_propulsors_control/launch/crab_launch.py
