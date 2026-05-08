@@ -377,7 +377,43 @@ session_name/
 
 ---
 
-## Testing Procedures
+## Testing Procedure for Basic Actuator Motion Control 
+
+### Quick Test Scripts (Automated)
+
+**Test Script Generator (`generate_test_scripts.py`):**
+
+Automated Python script that generates bash test sequences for position and velocity modes.
+
+**Features:**
+- Generates `test_position_mode.sh` with 31 position control tests
+- Generates `test_velocity_mode.sh` with 32 velocity control tests
+- Parameterized test commands with configurable delays
+- Covers: drive commands, sine_flap variations, phase offsets, frequency/amplitude ratios, waveforms, edge cases
+
+**Usage:**
+```bash
+python3 generate_test_scripts.py
+# Generates test_position_mode.sh and test_velocity_mode.sh
+
+# Run position mode tests
+./test_position_mode.sh
+
+# Run velocity mode tests (after changing operating_mode to 'velocity' in launch file)
+./test_velocity_mode.sh
+```
+
+**Generated Test Coverage:**
+- Individual servo control (drive commands)
+- Basic sine_flap gaits with varying parameters
+- Phase offset variations (up/down flap, 180° shifts)
+- Frequency and amplitude ratio tests
+- Hold modes and differential motion
+- Waveform function tests
+- Edge cases (low frequency, small amplitude, position limits)
+- Rapid command sequences
+
+---
 
 ### Position Mode Test (`test_position_mode.sh`)
 
@@ -447,7 +483,45 @@ session_name/
 3. Verify servo motion via encoder feedback
 4. Extract telemetry data for analysis
 
-**Status:** Tests completed. Data being analyzed for phase accuracy, amplitude tracking, and inter-servo synchronization. More rigorous testing procedures under development.
+**Status:** Tests completed. Data being analyzed for phase accuracy, amplitude tracking, and inter-servo synchronization.
+
+---
+
+### Comprehensive Testing Procedure (Rigorous Validation)
+
+**Overview:**
+A comprehensive 126-test validation procedure covering all system layers from hardware interface to application logic. Designed for rigorous characterization and performance verification.
+
+**Scope:**
+- **Hardware Interface (32 tests):** Serial communication, servo configuration, position/velocity control, feedback systems
+- **Controller Layer (32 tests):** Command processing, PID control, limit enforcement, telemetry publishing
+- **Application Layer (30 tests):** Command parsing, actuator mapping, telemetry-driven execution, motion functions
+- **Motion Library (18 tests):** Direct control, waveform functions, flapping gaits, kwargs system
+- **Data Recording (16 tests):** Bag recording, CSV extraction, snippet generation, plot generation
+- **System Integration (12 tests):** Multi-node communication, telemetry loop integrity, launch system
+- **Edge Cases (14 tests):** Boundary conditions, error handling, long-duration stability
+- **Performance Metrics (12 tests):** Timing accuracy, tracking accuracy, power efficiency
+
+**Documentation:**
+Complete testing procedure with WHAT-WHY-HOW methodology documented in `TESTING_PROCEDURE_PART1.md` (and subsequent parts). Each test includes:
+- What is being tested (objective)
+- Why it matters (rationale)
+- How to execute (step-by-step commands)
+- Pass/Fail criteria with quantitative metrics
+- Debugging procedures for failures
+- Expected outcomes and validation methods
+
+**Test Methodology:**
+Each test follows structured format:
+1. **WHAT:** Clear test objective
+2. **WHY:** Technical rationale and importance
+3. **HOW:** Executable command sequence with embedded bash/python scripts
+4. **PASS Criteria:** Quantitative metrics and observable outcomes
+5. **WHY this proves it:** Technical explanation of validation logic
+6. **FAIL Indicators:** Common failure modes and symptoms
+7. **If FAIL:** Debug procedures and resolution steps
+
+**Status:** Testing procedure documentation in progress. Part 1/4 complete (Hardware Interface layer - 32 tests). Estimated total test time: 8-12 hours for complete validation suite.
 
 ---
 
