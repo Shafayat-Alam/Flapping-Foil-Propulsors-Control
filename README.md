@@ -490,7 +490,7 @@ python3 generate_test_scripts.py
 ### Comprehensive Testing Procedure (Rigorous Validation)
 
 **Overview:**
-A comprehensive 126-test validation procedure covering all system layers from hardware interface to application logic. Designed for rigorous characterization and performance verification.
+A comprehensive 126 test validation procedure covering all system layers from hardware interface to application logic. Designed for rigorous characterization and performance verification.
 
 **Scope:**
 - **Hardware Interface (32 tests):** Serial communication, servo configuration, position/velocity control, feedback systems
@@ -503,7 +503,7 @@ A comprehensive 126-test validation procedure covering all system layers from ha
 - **Performance Metrics (12 tests):** Timing accuracy, tracking accuracy, power efficiency
 
 **Documentation:**
-Complete testing procedure with WHAT-WHY-HOW methodology documented in `TESTING_PROCEDURE_PART1.md` (and subsequent parts). Each test includes:
+Complete testing procedure with WHAT-WHY-HOW methodology. Each test includes:
 - What is being tested (objective)
 - Why it matters (rationale)
 - How to execute (step-by-step commands)
