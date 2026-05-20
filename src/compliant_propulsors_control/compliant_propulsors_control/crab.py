@@ -46,7 +46,7 @@ import json
 from collections import deque
 
 # Import user-defined motion library
-from flapping_foil_propulsors_control.motion_library import MotionLibrary
+from compliant_propulsors_control.motion_library import MotionLibrary
 
 
 # ---------------------------------------------------------------------------

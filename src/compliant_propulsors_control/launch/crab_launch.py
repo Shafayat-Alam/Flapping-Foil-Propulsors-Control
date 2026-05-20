@@ -24,7 +24,7 @@ Example: [[3, 3.00, 1, -1.57, 1.57], [4, 3.42, 1, -3.14, 3.14]]
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
-PACKAGE = 'flapping_foil_propulsors_control'
+PACKAGE = 'compliant_propulsors_control'
 
 
 def generate_launch_description():

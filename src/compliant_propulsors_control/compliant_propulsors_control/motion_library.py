@@ -449,7 +449,7 @@ class MotionLibrary:
         return result
     
     # -----------------------------------------------------------------------
-    # ADD YOUR CUSTOM MOTION FUNCTIONS BELOW
+    # ADD CUSTOM MOTION FUNCTIONS BELOW
     # -----------------------------------------------------------------------
     
     # Example template:
