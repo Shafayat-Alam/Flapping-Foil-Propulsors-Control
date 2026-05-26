@@ -13,7 +13,7 @@ A ROS 2 Jazzy control stack for a bio-inspired blue crab robotic system with mul
 └──────────────┘      └──────────────┘      └─────────────────┘      └──────────────────────┘
        │                      │                       │                          │
        │                      │                       │                ┌─────────┴─────────┐
-   robot_cmd             motion_cmd             joint_cmd              │                   │
+   robot_cmd             motion_cmd             joint_cmd              │         |         │
    telemetry             telemetry           joint_feedback   Dynamixel SDK    I2C (IMU)   USB (Camera)
                               └────────── ros2_control framework ────────┘    Adafruit      OpenCV
                                                                               ICM20948      StellarHD
@@ -586,8 +586,7 @@ Hybrid Configuration     →  Real feedback for IDs [1,2], Sim feedback for IDs 
 ### Gazebo Simulation Screenshots
 
 **[Gazebo Screenshots - To Be Uploaded]**
-
-*Reserved space for:*
+s
 - Gazebo environment with robot model
 - Robot executing sine_flap gait in simulation
 - Hybrid mode (real + simulated servos) visualization
@@ -636,25 +635,28 @@ ros2 launch compliant_propulsors_control gazebo_launch.py
 This project follows a **V-Model verification and validation methodology** structured around IEEE 1012-2016 (System and Software V&V), with safety analysis informed by MIL-STD-882E (System Safety) and functional safety practices from IEC 61508. Testing is organized into four phases progressing from component-level verification through system-level validation, with continuous regression monitoring via CI/CD.
 
 ```
-Requirements ──────────────────────────────── System Validation (Phase 3)
-    │                                                    │
-    └── System Design ──────────────── Integration Testing (Phase 2)
-            │                                    │
-            └── Component Design ──── Component Verification (Phase 1)
-                       │                         │
-                       └──── Implementation ────┘
-                                   │
-                          Continuous Regression (Phase 4)
-```
+Requirements ─────────────────────────────────────► System Validation (Phase 3)
+    │                                                 ▲
+    ▼                                                 │
+System Design ────────────────────────────────────► Integration Testing (Phase 2)
+    │                                                 ▲
+    ▼                                                 │
+Component Design ─────────────────────────────────► Component Verification (Phase 1)
+    │                                                 ▲
+    ▼                                                 │
+Implementation ───────────────────────────────────┘
+    │
+    ▼
+Continuous Regression (Phase 4)```
 
 **Testing Phases:**
 
-| Phase | Scope | Methodology | Automation |
+| Phase | Scope | Methodology | Operation |
 |-------|-------|-------------|------------|
-| 1. Component Verification | Manufacturing, electrical, software | Plan-Driven V&V (Waterfall) | Partial — unit tests automated via CI |
+| 1. Component Verification | Manufacturing, electrical, software | Plan-Driven V&V (Waterfall) | Partially automated — unit tests automated via CI |
 | 2. Integration Testing | SIL (Gazebo), hardware-software, multi-sensor | Software/Hardware-in-the-Loop | Automated — `test_position_mode.sh`, `test_velocity_mode.sh` |
-| 3. System Validation | Performance, safety, endurance | Plan-Driven V&V + Fault Injection | Partial — `recorder.py` + analysis scripts |
-| 4. Continuous Regression | Performance tracking vs baseline | CI/CD (DevOps) | Fully automated — GitHub Actions |
+| 3. System Validation | Performance, safety, endurance | Plan-Driven V&V + Fault Injection | Partially automated — `recorder.py` + analysis scripts |
+| 4. Continuous Regression | Performance tracking vs baseline | CI/CD (DevOps) | Automated — GitHub Actions |
 
 ---
 
