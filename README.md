@@ -647,7 +647,8 @@ Component Design ─────────────────────
 Implementation ───────────────────────────────────┘
     │
     ▼
-Continuous Regression (Phase 4)```
+Continuous Regression (Phase 4)
+```
 
 **Testing Phases:**
 
