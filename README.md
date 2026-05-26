@@ -43,10 +43,13 @@ A ROS 2 Jazzy control stack for a bio-inspired blue crab robotic system with mul
 5. [Robot Design](#robot-design)
 6. [Hardware Specification](#hardware-specification)
 7. [Gazebo Simulation](#gazebo-simulation)
-8. [Testing and Validation](#testing-and-validation)
-   - [Quick Functional Testing](#quick-functional-testing-automated-scripts)
-   - [Gazebo Simulation Testing](#gazebo-simulation-testing)
-   - [Comprehensive System Validation](#comprehensive-system-validation)
+8. [Verification and Validation](#verification-and-validation)
+   - [V&V Framework](#vv-framework)
+   - [Phase 1: Component Verification](#phase-1-component-verification)
+   - [Phase 2: Integration Testing](#phase-2-integration-testing)
+   - [Phase 3: System Validation](#phase-3-system-validation)
+   - [Phase 4: Continuous Regression](#phase-4-continuous-regression)
+   - [Performance Benchmarks](#performance-benchmarks)
 9. [Dependencies](#dependencies)
 10. [Installation and Build](#installation-and-build)
 11. [Launch](#launch)
@@ -403,21 +406,6 @@ session_name/
 
 ---
 
-## Hardware Specification
-
-| Component | Model | Protocol/Interface | Notes |
-|-----------|-------|-------------------|-------|
-| **Actuators** | Dynamixel XW430-T200 (×2) | RS-485, Protocol 2.0 | Position/velocity control, encoder feedback |
-| **IMU** | Adafruit ICM-20948 (9-Axis) | I2C (address 0x69) | Accelerometer, gyroscope, magnetometer @ 100 Hz |
-| **Vision** | DWE StellarHD USB Camera | USB 2.0/3.0, OpenCV | 1920×1080 @ 30 fps, synchronized video recording |
-| **Compute** | NVIDIA Jetson Orin Nano (8GB) | — | ROS 2 Jazzy, Ubuntu 24.04 |
-| **Power** | 12V LiPo Battery | — | Servo power supply |
-
-**Future Sensor Fusion:**
-Closed-loop control will integrate vision and IMU data for state estimation, enabling position/orientation feedback and autonomous navigation in both air and water environments.
-
----
-
 ## Robot Design
 
 ### Multimodal Soft Actuator System
@@ -494,6 +482,29 @@ The robot features a bio-inspired design following blue crab physiology proporti
 
 ---
 
+## Hardware Specification
+
+| Component | Model | Protocol/Interface | Notes |
+|-----------|-------|-------------------|-------|
+| **Actuators** | Dynamixel XW430-T200 (×4) | RS-485, Protocol 2.0 | 2 per side (pitch + roll), encoder feedback |
+| **IMU** | Adafruit ICM-20948 (9-Axis) | I2C (address 0x69) | Accelerometer, gyroscope, magnetometer @ 100 Hz |
+| **Vision** | DWE StellarHD USB Camera | USB 2.0/3.0, OpenCV | 1920×1080 @ 30 fps, synchronized video recording |
+| **Compute** | NVIDIA Jetson Orin Nano (8GB) | — | ROS 2 Jazzy, Ubuntu 24.04 |
+| **Power** | 3S LiPo Battery Pack | — | Dual rail: servos + compute |
+| **Servo Bus** | Dynamixel U2D2 Power Hub | USB → RS-485 | Power distribution + RS-485 interpreter |
+
+**Power Distribution:**
+```
+3S LiPo Battery Pack (11.1–12.6V)
+    ├── Rail 1 → U2D2 Power Hub → 4× XW430-T200 Servos
+    └── Rail 2 → Jetson Orin Nano (Camera + IMU powered via Nano)
+```
+
+**Future Sensor Fusion:**
+Closed-loop control will integrate vision (AprilTag) and IMU data with motor encoder feedback for state estimation, enabling position/orientation feedback and autonomous navigation in both air and water environments.
+
+---
+
 ## Gazebo Simulation
 
 ### Overview
@@ -501,10 +512,10 @@ The robot features a bio-inspired design following blue crab physiology proporti
 A Gazebo Harmonic simulation environment for kinematic testing and gait development without physical hardware. The simulation provides a **hybrid architecture** that auto-detects real servos and seamlessly merges physical and simulated feedback.
 
 **Simulation Capabilities:**
-- Full 4-DOF kinematic model (2 servos per side)
+- Full 4-DOF kinematic model (2 servos per side: pitch + roll)
 - Visual rendering of robot geometry and motion
 - Simulated IMU (9-axis accelerometer/gyroscope/magnetometer)
-- Simulated camera (stereo fisheye, 170° FOV)
+- Simulated camera (StellarHD, 1920×1080 @ 30fps)
 - Hybrid mode: Real servos + simulated servos in single session
 - Position and velocity control modes
 - Same control stack as hardware (crab.py, controller.py)
@@ -562,12 +573,12 @@ Hybrid Configuration     →  Real feedback for IDs [1,2], Sim feedback for IDs 
 3. **Gazebo Camera Interface** (`gazebo_stellarhd_interface.py`)
    - Subscribes to `/camera/image_raw` ROS2 topic from Gazebo
    - Records video to disk (MP4 format)
-   - Simulates ELP Fisheye camera (170° FOV)
+   - Simulates StellarHD camera interface
 
 **URDF Model:**
-- 4-DOF robot with base_link and 4 revolute joints
-- Accurate mass and inertia properties from CAD
-- Visual meshes for flipper geometry
+- 4-DOF robot with base_link and 4 revolute joints (left_pitch, left_roll, right_pitch, right_roll)
+- Accurate mass and inertia properties from Fusion 360 CAD export
+- Visual meshes for all links including electronics box, servo housings, aerial truss structures, and camera bracket
 - Camera and IMU sensor links
 
 ---
@@ -580,7 +591,7 @@ Hybrid Configuration     →  Real feedback for IDs [1,2], Sim feedback for IDs 
 - Gazebo environment with robot model
 - Robot executing sine_flap gait in simulation
 - Hybrid mode (real + simulated servos) visualization
-- Camera view from simulated fisheye camera
+- Camera view from simulated camera
 
 ---
 
@@ -618,488 +629,295 @@ ros2 launch compliant_propulsors_control gazebo_launch.py
 
 ---
 
-### Simulation Workflow
+## Verification and Validation
 
-**Typical Development Cycle:**
+### V&V Framework
 
-1. **Develop in Simulation:**
-   - Create new motion functions in motion_library.py
-   - Test gaits in Gazebo (no hardware risk)
-   - Visualize trajectories and timing
-   - Record simulation data for analysis
+This project follows a **V-Model verification and validation methodology** structured around IEEE 1012-2016 (System and Software V&V), with safety analysis informed by MIL-STD-882E (System Safety) and functional safety practices from IEC 61508. Testing is organized into four phases progressing from component-level verification through system-level validation, with continuous regression monitoring via CI/CD.
 
-2. **Validate in Hybrid Mode:**
-   - Connect 1-2 real servos
-   - Verify motion on real hardware
-   - Compare real vs simulated feedback
-   - Identify hardware-specific behavior
-
-3. **Deploy to Full Hardware:**
-   - Switch to hardware launch file
-   - Run full validation tests
-   - Characterize performance differences
-   - Refine motion parameters
-
----
-
-### Gazebo Testing and Validation
-
-**Simulation Environment Validation:**
-
-The Gazebo simulation environment itself requires validation before it can be used as a testing platform for control algorithms. This validation ensures the simulation accurately represents the kinematic model and that all interfaces function correctly.
-
-**Test Coverage:**
-
-1. **Launch Verification**
-   - Gazebo startup without errors
-   - Robot model visibility and mesh loading
-   - URDF parsing and joint configuration
-
-2. **Joint Command Response**
-   - Simulated servos respond to position commands
-   - Commanded values match joint_states feedback
-   - All 4 joints independently controllable
-
-3. **Feedback Loop Integrity**
-   - Telemetry publishes at 400 Hz target rate
-   - No dropped messages or rate instability
-   - Feedback synchronization with commanded trajectories
-
-4. **Hybrid Mode Detection**
-   - Auto-detection of connected real servos
-   - Correct partition of real vs simulated servo IDs
-   - Merged feedback stream from both sources
-
-5. **Visual-Feedback Consistency**
-   - Gazebo visualization matches telemetry data
-   - Joint angles in GUI correspond to encoder feedback
-   - Camera and IMU ROS2 topics publish at expected rates
-
-**Acceptance Criteria:**
-- All 4 joints respond to position commands within 100 ms
-- Telemetry publish rate: 400 ± 10 Hz sustained over 5 minutes
-- Zero console errors during continuous sine_flap execution
-- Hybrid mode correctly identifies and merges real servo feedback
-
-**Known Issues Documented:**
-- URDF mesh loading failures require correct file path configuration in prototype.xacro
-- Joint controller startup requires 3-second delay (implemented in launch file)
-- Gazebo physics instability at high frequencies (>5 Hz gaits) due to solver limitations
-- Camera/IMU ROS2 topic latency: 30-50 ms behind joint states (expected simulation overhead)
-
----
-
-### Simulation Validation
-
-**Comparison Metrics:**
-- Trajectory tracking error (sim vs hardware)
-- Phase offset accuracy between servo pairs
-- Timing consistency (control loop jitter)
-- Command latency (cmd → execution)
-
-**Known Discrepancies:**
-- Simulated servos have zero backlash/deadband
-- No current draw or thermal effects in simulation
-- Gravity effects simplified (no flipper droop)
-- No mechanical compliance or structural damping
-
-**Use simulation data as baseline, not ground truth for hardware performance.**
-
----
-
-## Testing and Validation
-
-### Testing Overview
-
-**Two-Tier Testing Methodology:**
-
-1. **Quick Functional Testing** (Automated Scripts)
-   - Position mode validation (`test_position_mode.sh` - 31 tests)
-   - Velocity mode validation (`test_velocity_mode.sh` - 32 tests)
-   - Basic gait execution verification
-   - **Purpose:** Rapid smoke testing for basic functionality
-   - **Time:** ~15-30 minutes per mode
-   - **When:** After code changes, before comprehensive validation
-
-2. **Comprehensive System Validation** (Rigorous Characterization)
-   - **Software Testing:** Unit tests, system identification, control loop characterization
-   - **Hardware Validation:** Electrical testing, mechanical testing, calibration procedures
-   - **Environmental Testing:** Air vs water characterization, thermal performance
-   - **Safety & Failure Modes:** Emergency response, fault injection, failsafe verification
-   - **Data Quality Assurance:** Synchronization validation, regression testing
-   - **Purpose:** Full system characterization for research publication and deployment
-   - **Time:** ~8-12 hours complete suite
-   - **When:** Major milestones, pre-deployment, research documentation
-
----
-
-### Quick Functional Testing (Automated Scripts)
-
-**Test Script Generator (`generate_test_scripts.py`):**
-
-Automated Python script that generates bash test sequences for position and velocity modes.
-
-**Features:**
-- Generates `test_position_mode.sh` with 31 position control tests
-- Generates `test_velocity_mode.sh` with 32 velocity control tests
-- Parameterized test commands with configurable delays
-- Covers: drive commands, sine_flap variations, phase offsets, frequency/amplitude ratios, waveforms, edge cases
-
-**Usage:**
-```bash
-python3 generate_test_scripts.py
-# Generates test_position_mode.sh and test_velocity_mode.sh
-
-# Run position mode tests
-./test_position_mode.sh
-
-# Run velocity mode tests (after changing operating_mode to 'velocity' in launch file)
-./test_velocity_mode.sh
+```
+Requirements ──────────────────────────────── System Validation (Phase 3)
+    │                                                    │
+    └── System Design ──────────────── Integration Testing (Phase 2)
+            │                                    │
+            └── Component Design ──── Component Verification (Phase 1)
+                       │                         │
+                       └──── Implementation ────┘
+                                   │
+                          Continuous Regression (Phase 4)
 ```
 
-**Generated Test Coverage:**
-- Individual servo control (drive commands)
-- Basic sine_flap gaits with varying parameters
-- Phase offset variations (up/down flap, 180° shifts)
-- Frequency and amplitude ratio tests
-- Hold modes and differential motion
-- Waveform function tests
-- Edge cases (low frequency, small amplitude, position limits)
-- Rapid command sequences
+**Testing Phases:**
+
+| Phase | Scope | Methodology | Automation |
+|-------|-------|-------------|------------|
+| 1. Component Verification | Manufacturing, electrical, software | Plan-Driven V&V (Waterfall) | Partial — unit tests automated via CI |
+| 2. Integration Testing | SIL (Gazebo), hardware-software, multi-sensor | Software/Hardware-in-the-Loop | Automated — `test_position_mode.sh`, `test_velocity_mode.sh` |
+| 3. System Validation | Performance, safety, endurance | Plan-Driven V&V + Fault Injection | Partial — `recorder.py` + analysis scripts |
+| 4. Continuous Regression | Performance tracking vs baseline | CI/CD (DevOps) | Fully automated — GitHub Actions |
 
 ---
 
-#### Position Mode Test (`test_position_mode.sh`)
+### Phase 1: Component Verification
 
-**What it tests:**
-- Position control accuracy and tracking
-- Servo response to commanded positions
-- Position limit enforcement
-- Offset application and calibration
+Component-level verification confirms that each manufactured part, electrical subsystem, and software module meets its design specification in isolation before integration.
 
-**What insights it provides:**
-- Steady-state position error
-- Settling time and overshoot
-- Position limit clamping behavior
-- Servo mechanical zero accuracy
+#### 1.1 Manufacturing Verification
 
-**Procedure:**
-1. Calibration (move to zero offsets)
-2. Step commands to various positions within limits
-3. Boundary testing (min/max limits)
-4. Return to zero
+**CNC Machined Components:**
 
-**Status:** Tests completed. Data being analyzed for position accuracy, settling time, and steady-state error characterization.
+All brackets, mounts, and base plate verified by dimensional inspection against CAD drawings. Critical dimensions measured with calipers; flatness verified against a surface plate. Acceptance: ±0.1mm on mating surfaces, ±0.005" on 1/4"-20 fastener holes.
 
----
+**Laser Cut Components:**
 
-#### Velocity Mode Test (`test_velocity_mode.sh`)
+Electronics board and mounting plates verified for dimensional accuracy against DXF source files. Edge quality inspected for charring or burrs that would affect fit. Acceptance: ±0.05mm dimensional, fasteners seat without forcing.
 
-**What it tests:**
-- Velocity control accuracy
-- Velocity tracking performance
-- Position limit enforcement in velocity mode (auto-stop at boundaries)
-- Velocity ramping and transitions
+**Soft Actuator Assembly:**
 
-**What insights it provides:**
-- Velocity tracking error
-- Response to velocity step changes
-- Boundary detection and stopping behavior
-- Acceleration/deceleration characteristics
+Flipper-to-servo-horn attachment verified by manual torque test to confirm no slip at maximum servo output torque. Carbon fiber rod insertion (air flipper) verified by pull test for seating and rotation resistance. Icarex fabric bonding verified by manual peel test at edges.
 
-**Procedure:**
-1. Calibration
-2. Constant velocity commands (positive/negative)
-3. Velocity ramps and steps
-4. Boundary approach testing (velocity zeros at limits)
+**AV Bay Enclosure:**
 
-**Status:** Tests completed. Data being analyzed for velocity tracking accuracy and boundary enforcement behavior.
+Chord grip installations verified for seating flush with enclosure wall. Silicone seals inspected for full bead coverage with no voids. Enclosure lid closure verified for full fastener engagement without binding.
 
----
+**Fastener Verification:**
 
-#### Gait Execution Test (Position Mode)
+All M3 and 1/4"-20 joints inspected for minimum 2× diameter thread engagement. All joints subject to vibration receive nylock nuts or threadlocker. Continuity of fastener engagement verified before operation.
 
-**What it tests:**
-- Sine flap motion function execution
-- Differential servo control (phase offsets)
-- Continuous trajectory tracking
-- Telemetry-driven loop performance
+#### 1.2 Electrical Verification
 
-**What insights it provides:**
-- Phase offset accuracy between servo pairs
-- Amplitude and frequency accuracy
-- Control loop jitter and timing consistency
-- Servo synchronization
+**Power System:**
 
-**Procedure:**
-1. Execute sine_flap with default 90° phase offset
-2. Record 3 cycles at 0.5 Hz
-3. Verify servo motion via encoder feedback
-4. Extract telemetry data for analysis
+| Test | Acceptance Criteria |
+|------|---------------------|
+| Battery voltage, no load | 11.1–12.6V (3S LiPo nominal) |
+| Servo rail voltage under load (4 servos flapping) | >11.0V at U2D2 hub |
+| Nano rail voltage under compute load | Stable within regulator specification |
+| Rail-to-rail ground potential | <50mV between servo rail and Nano rail |
+| Cable continuity (all signal and power cables) | <1Ω end-to-end |
+| Connector seating (all connectors) | No disconnection under light pull |
+| Insulation integrity | No exposed conductors, no pinch points |
 
-**Status:** Tests completed. Data being analyzed for phase accuracy, amplitude tracking, and inter-servo synchronization.
+**Communication Bus:**
+
+| Bus | Test | Acceptance Criteria |
+|-----|------|---------------------|
+| RS-485 (U2D2 → Servos) | Dynamixel SDK broadcast ping | All 4 servo IDs respond, <1ms round-trip |
+| USB (U2D2 → Nano) | Device enumeration | `/dev/ttyUSB*` detected at 1 Mbaud |
+| USB (Camera → Nano) | OpenCV `VideoCapture` init | Frame acquired at 1920×1080 |
+| I2C (IMU → Nano) | `i2cdetect` bus scan | Device responds at address 0x69 |
+
+**Automation:** `electrical_verification.py` performs servo ping, camera init, and IMU detect in a single pass and logs pass/fail per subsystem.
+
+#### 1.3 Software Verification
+
+**Unit Testing:**
+
+Automated test suite validates all software modules with mock hardware interfaces. Total: 48 unit tests covering motion library functions (18), controller PID logic (12), command parsing (8), ROS2 wire format (6), and position limit enforcement (4). Target coverage: >80% for motion library and controller modules.
+
+**CI Pipeline:**
+
+GitHub Actions workflow triggers on every push and pull request. Pipeline builds workspace, runs pytest suite, and checks PEP8 compliance via flake8. Merge is blocked if any test fails or coverage drops below threshold.
 
 ---
 
-### Gazebo Simulation Testing
+### Phase 2: Integration Testing
 
-**Purpose:**
-Validate control logic and motion library functions in simulation before hardware testing. Reduces hardware wear and enables rapid parameter iteration.
+Integration testing validates subsystem interactions, progressing from simulated (SIL) through hardware-software to multi-sensor integration.
 
-**Prerequisites:**
-Run Gazebo environment validation tests (see Gazebo Testing and Validation subsection) to ensure simulation is functioning correctly before using it for control testing.
+#### 2.1 Software-in-the-Loop — Gazebo Simulation (IEC 61508 §7.4.7)
 
-**Test Workflow:**
-```bash
-# 0. Verify Gazebo environment first (see Gazebo section)
-ros2 launch compliant_propulsors_control gazebo_launch.py
-# Confirm all 5 environment validation tests pass
+Control algorithms are validated against the Gazebo kinematic model before hardware deployment. The simulation environment itself is validated first (see Gazebo Testing and Validation under the Gazebo Simulation section).
 
-# 1. Run automated test scripts (same as hardware)
-./test_position_mode.sh  # Uses simulated feedback
-./test_velocity_mode.sh
+**Automated Test Suites:**
+- `test_position_mode.sh` — 31 position control tests (drive commands, sine_flap variations, phase offsets, waveforms, edge cases)
+- `test_velocity_mode.sh` — 32 velocity control tests (tracking, boundary enforcement, ramp response)
 
-# 2. Record simulation data
-python3 recorder.py sim_validation_session
+Total: 63 automated SIL tests.
 
-# 3. Compare simulation vs hardware results
-python3 compare_sim_hardware.py sim_validation_session/ hardware_session/
-```
+**Acceptance Criteria:** All 63 tests pass. Phase offset error <5°. Position commands within actuator_map limits. Control loop maintains 400 ±10 Hz. Zero ROS2 topic communication failures.
 
-**What Simulation Testing Validates:**
-- Motion library function logic and trajectory generation
-- Command parsing and actuator mapping correctness
-- Telemetry-driven control loop timing (software only)
-- Phase offset and differential motion calculations
-- Position limit enforcement logic
+**Sim-to-Hardware Correlation:** `compare_sim_hardware.py` runs identical test suites on simulation and hardware, then quantifies deviations in tracking error, phase accuracy, settling time, and steady-state error. Identifies hardware-dependent behaviors (backlash, compliance, friction) not captured by the kinematic model.
 
-**What Simulation CANNOT Validate:**
-- Servo PID tuning and tracking accuracy (hardware-dependent)
-- Current draw and thermal behavior
-- Mechanical backlash and compliance effects
-- Sensor noise and communication errors
-- Real-world timing jitter and latency
+#### 2.2 Hardware-Software Integration
 
-**Simulation as Pre-Hardware Gate:**
-- All new motion functions MUST pass simulation tests before hardware deployment
-- Gait parameters tuned in simulation, refined on hardware
-- Simulation tests run in CI/CD pipeline for regression detection
+Each hardware subsystem is verified with its ROS2 interface node operating in the full control stack.
 
----
+**Actuator Integration:**
 
-### Comprehensive System Validation
+| Test | Acceptance Criteria |
+|------|---------------------|
+| Broadcast ping (all 4 servo IDs) | 4/4 respond via Dynamixel SDK |
+| Position write/read cycle | Encoder feedback within ±0.05 rad of commanded |
+| Velocity write/read cycle | Encoder feedback within ±0.1 rad/s of commanded |
+| GroupSyncWrite (4 servos simultaneous) | <1ms inter-servo latency |
+| SIGINT emergency stop during motion | Torque disabled within 100ms |
 
-**Overview:**
-Rigorous multi-layer validation covering software, hardware, environmental, and safety testing. Designed for research-grade characterization and deployment readiness.
+**IMU Integration (Adafruit ICM-20948):**
 
-**Scope:**
-- **Software Testing (32 tests):** Unit tests, motion library validation, command parsing, telemetry loop integrity
-- **Hardware Interface (32 tests):** Serial communication, servo configuration, position/velocity control, feedback systems
-- **Controller Layer (32 tests):** Command processing, PID control, limit enforcement, telemetry publishing
-- **Application Layer (30 tests):** Command parsing, actuator mapping, telemetry-driven execution, motion functions
-- **System Identification (18 tests):** Frequency response, step response, tracking error, timing jitter
-- **Hardware Validation (16 tests):** Electrical testing, mechanical testing, calibration, environmental characterization
-- **Safety & Failure Modes (14 tests):** Emergency response, fault injection, failsafe verification
-- **Data Quality Assurance (12 tests):** Synchronization validation, regression testing, automated validation
+| Test | Acceptance Criteria |
+|------|---------------------|
+| ROS2 topic publish rate (`/imu_data`) | 100 ±5 Hz sustained |
+| Static accelerometer reading (gravity) | 9.81 ±0.5 m/s² magnitude |
+| Static gyroscope reading (zero rotation) | <0.5°/s bias |
+| Coordinate frame verification (rotate about known axis) | Correct axis responds |
+| Magnetometer read | Non-zero field, consistent heading |
 
-**Total:** 186 tests across 8 validation domains
+**Camera Integration (DWE StellarHD):**
 
-**Test Methodology:**
-Each test follows structured format:
-1. **WHAT:** Clear test objective
-2. **WHY:** Technical rationale and importance
-3. **HOW:** Executable command sequence with embedded bash/python scripts
-4. **PASS Criteria:** Quantitative metrics and observable outcomes
-5. **WHY this proves it:** Technical explanation of validation logic
-6. **FAIL Indicators:** Common failure modes and symptoms
-7. **If FAIL:** Debug procedures and resolution steps
+| Test | Acceptance Criteria |
+|------|---------------------|
+| Frame acquisition | 30 ±2 FPS at 1920×1080 |
+| Command-synchronized video recording | Recording starts/stops on `robot_cmd` transitions |
+| Recording integrity (60-second capture) | MP4 playback without corruption |
+| AprilTag detection in FOV | Detection at 2m range, <1° orientation error |
 
-**Status:** Testing procedure documentation in progress. Estimated total test time: 8-12 hours for complete validation suite.
+**Automation:** `integration_test.py` executes the full hardware-software integration suite and logs pass/fail per subsystem.
+
+#### 2.3 Multi-Sensor Integration
+
+Validates data synchronization and correlation across subsystems operating simultaneously.
+
+| Test | Acceptance Criteria |
+|------|---------------------|
+| IMU-to-encoder timestamp alignment | <10ms synchronization error |
+| Camera-to-encoder timestamp alignment | <50ms synchronization error |
+| Camera-to-IMU timestamp alignment | <50ms synchronization error |
+| IMU vibration spectrum during flapping | Structural resonances documented |
+| AprilTag + encoder fused pose vs encoder-only | Position error <5mm at 1m range |
+
+**Automation:** `sensor_fusion_validation.py` runs multi-sensor recording during gait execution and computes cross-correlation metrics.
 
 ---
 
-### Software Testing
+### Phase 3: System Validation
 
-**Unit Testing Framework:**
-```bash
-# Install test dependencies
-pip install pytest pytest-ros unittest --break-system-packages
+System-level validation characterizes performance with the complete system operating in its target configuration.
 
-# Run unit tests
-pytest test/
-```
+#### 3.1 Actuator Performance Characterization
 
-**Test Coverage:**
-- Motion library function validation with mock hardware
-- Controller PID logic verification with synthetic feedback
-- Command parsing and actuator mapping tests
-- Telemetry loop timing validation
+**Step Response:**
 
-**Example Unit Test Structure:**
-```python
-# test/test_motion_library.py
-def test_sine_flap_phase_offset():
-    """Verify 90° phase offset between servo pairs"""
-    motion = MotionLibrary(mock_node)
-    result = motion.sine_flap(t=0, freq=1.0, amp=1.0, phase=0.0)
-    assert abs(result[3] - result[4]) == pytest.approx(pi/2, abs=0.01)
-```
+| Metric | Target |
+|--------|--------|
+| Rise time (10–90%) | <200ms |
+| Overshoot | <10% |
+| Settling time (2% band) | <500ms |
+| Steady-state error | <0.05 rad |
 
----
+**Frequency Response (System Identification):**
 
-### System Identification
+Sine sweeps from 0.1–10 Hz (position) and 0.1–20 Hz (velocity) generate Bode plots for bandwidth identification. Expected position bandwidth: 5–10 Hz @ -3dB. Expected velocity bandwidth: 10–20 Hz @ -3dB. Phase margin: >30°.
 
-**Control Loop Characterization:**
-- **Step Response:** Rise time, overshoot, settling time measurement
-- **Frequency Response:** Bandwidth and phase margin from sine sweeps
-- **Tracking Error:** RMS error vs. frequency and amplitude
-- **Timing Jitter:** Control loop execution time histogram
+**Gait Characterization:**
 
-**Automated System ID Script:**
-```bash
-# Generate frequency sweep test
-python3 generate_sysid_tests.py --mode position --freq_range 0.1,10.0 --steps 20
-./run_sysid_sweep.sh
-python3 analyze_bode_plot.py session_name/  # Generates Bode plots from CSV
-```
+| Metric | Target |
+|--------|--------|
+| Phase offset accuracy (servo pair) | ±5° |
+| Amplitude tracking | ±0.05 rad |
+| Frequency accuracy | ±0.05 Hz |
+| Inter-servo synchronization | <5ms temporal lag |
 
-**Key Metrics:**
-- Position mode bandwidth (expected: ~5-10 Hz @ -3dB)
-- Velocity mode bandwidth (expected: ~10-20 Hz @ -3dB)
-- Steady-state error (<0.05 rad for position, <0.1 rad/s for velocity)
-- Control loop jitter (<1 ms std dev @ 400 Hz)
+**Automation:** `generate_sysid_tests.py` generates frequency sweep sequences. `analyze_bode_plot.py`, `analyze_step_response.py`, and `analyze_gait.py` extract metrics from recorded telemetry CSVs.
 
----
+#### 3.2 Sensor Characterization
 
-### Hardware Validation
+**IMU Calibration and Noise:**
 
-**Electrical Testing:**
-| Test | Method | Acceptance Criteria |
-|------|--------|---------------------|
-| Power supply stability | Oscilloscope @ servo terminals during motion | <5% voltage ripple |
-| Current draw | Ammeter in series with battery | <2A peak per servo |
-| RS-485 signal integrity | Logic analyzer @ 1 Mbaud | No errors over 1 hour |
-| Thermal performance | IR thermometer after 10 min operation | <60°C servo case temp |
+6-position tumble test extracts accelerometer and gyroscope bias (<50 mg, <0.5°/s targets) and scale factors (<0.5% error target). Magnetometer hard/soft iron compensation via sphere fit (R² >0.95 target). 10-minute static recording yields power spectral density and angular random walk for noise baseline.
 
-**Mechanical Testing:**
-| Test | Method | Acceptance Criteria |
-|------|--------|---------------------|
-| Flipper deflection | High-speed camera + OpenCV tracking | <5° deviation from rigid body |
-| Bearing wear | Visual inspection after 1000 cycles | No visible scoring or play |
-| Waterproofing | Submersion test, leak indicator paper | No moisture ingress |
-| Structural fatigue | 10,000 cycle stress test @ max amplitude | No cracks or delamination |
+**Automation:** `imu_calibrate` performs tumble test procedure. `analyze_imu_noise.py` computes PSD and Allan variance.
 
-**Calibration Procedures:**
-```bash
-# Servo zero calibration (mechanical reference point)
-ros2 topic pub --once /robot_cmd std_msgs/String \
-  "data: 'cmd_id:[0] func:[drive_multi] servos:{3:0.0, 4:0.0}'"
-# Manually align flippers to reference marks, record encoder values
+**Camera Calibration:**
 
-# IMU calibration (6-position tumble test)
-ros2 run compliant_propulsors_control imu_calibrate
-# Follow on-screen instructions for bias and scale factor estimation
-```
+Checkerboard-based intrinsic calibration via OpenCV. Target reprojection error: <0.5px. Distortion model coefficients (K1, K2, P1, P2) extracted and stored in `camera_intrinsics.yaml`. Motion blur characterized at flapping frequencies for image quality assessment.
 
----
+**Automation:** `calibrate_camera.py` performs full intrinsic calibration from checkerboard captures.
 
-### Safety and Failure Modes
+#### 3.3 Safety Verification (MIL-STD-882E)
 
-**Emergency Response Validation:**
-```bash
-# Test SIGINT torque disable (must respond <100ms)
-ros2 launch compliant_propulsors_control crab_launch.py
-# During motion, press Ctrl+C
-# PASS: Servos disable instantly, no coasting
-# FAIL: Delayed response or continued motion
+Fault injection testing validates system response to hazardous conditions. Each fault is injected during active gait execution.
 
-# Test position limit enforcement
-ros2 topic pub --once /robot_cmd std_msgs/String \
-  "data: 'cmd_id:[1] func:[drive] servo:[3] value:[15.0]'"
-# PASS: Servo clamps at max_limit from actuator_map
-# FAIL: Servo attempts to exceed limit or crashes
-```
+| Fault | Expected Response |
+|-------|-------------------|
+| SIGINT (Ctrl+C) during motion | Servo torque disabled within 100ms |
+| USB disconnection (U2D2 cable) | Servos hold last safe state or disable, no uncontrolled motion |
+| Power brownout (voltage drop to 10V) | Servo protection activates, no erratic behavior |
+| I2C bus failure (IMU disconnect) | System continues without IMU, error logged |
+| USB failure (camera disconnect) | System continues without camera, error logged |
+| Command beyond position limits | Clamped at actuator_map boundary, no physical limit contact |
+| Velocity toward position limit | Velocity zeros at boundary, smooth stop |
+| Controller node crash (kill controller.py) | Application layer detects, servos disable within 500ms |
+| Servo overcurrent (blocked flipper) | Current limit activates at 1200mA threshold |
 
-**Fault Injection Tests:**
-- Communication loss: Unplug USB mid-motion, verify failsafe state
-- Power brownout: Drop voltage to 10V, verify torque disable
-- Overcurrent: Block flipper mechanically, verify current limiting
-- Sensor failure: Disconnect encoder, verify safe degradation
+**Automation:** `safety_test.py` performs automated fault injection where possible. Manual faults (USB disconnect, power brownout) follow documented procedures with pass/fail criteria.
+
+#### 3.4 Endurance Validation
+
+| Test | Duration | Acceptance Criteria |
+|------|----------|---------------------|
+| Continuous flapping (1 Hz, max amplitude) | 30 minutes | No faults, servo case temp <60°C, no tracking degradation |
+| Continuous flapping (max frequency) | 10 minutes | No faults, no communication errors |
+| Repeated start/stop cycles | 100 cycles | No communication errors or state corruption |
+| Battery discharge test | Until voltage cutoff | Runtime documented, no brownout faults |
+
+**Automation:** `endurance_test.py` runs timed gait sequences with continuous telemetry recording. `analyze_thermal.py` plots temperature rise curves from servo current data.
+
+#### 3.5 Electrical Characterization Under Load
+
+| Test | Acceptance Criteria |
+|------|---------------------|
+| Servo rail voltage ripple during flapping (oscilloscope) | <5% ripple |
+| Peak current draw per servo (ammeter) | <2A at 1 Hz flapping |
+| RS-485 signal integrity (logic analyzer, 1 Mbaud) | Zero errors over 1 hour |
+| Servo case temperature after 10 min operation (IR thermometer) | <60°C |
+| Jetson Orin Nano temperature under full load | <80°C |
+
+#### 3.6 Mechanical Characterization Under Load
+
+| Test | Acceptance Criteria |
+|------|---------------------|
+| Flipper deflection during flapping (high-speed camera + OpenCV) | <5° from rigid body |
+| Joint backlash (encoder delta on direction reversal) | <0.2° mechanical deadband |
+| Flipper resonance (frequency sweep, accelerometer at tip) | Resonant frequencies documented |
+| Fastener retention after 1000 flapping cycles | No loosening |
+| Chord grip seal after submersion (10 min @ 1m depth) | No moisture ingress |
 
 ---
 
-### Data Quality Assurance
+### Phase 4: Continuous Regression (CI/CD)
 
-**Automated Validation:**
-```python
-# analyze_data_quality.py
-def validate_telemetry(csv_path):
-    """Check for dropped samples, outliers, timestamp jitter"""
-    df = pd.read_csv(csv_path)
-    
-    # Check for missing samples (should be ~400 Hz)
-    dt = df['time'].diff()
-    assert dt.mean() < 0.0026, f"Sample rate low: {1/dt.mean():.1f} Hz"
-    
-    # Check for outliers (>3σ from mean)
-    for col in ['position', 'velocity', 'current']:
-        z_scores = np.abs((df[col] - df[col].mean()) / df[col].std())
-        assert (z_scores > 3).sum() < len(df) * 0.01, f"Outliers in {col}"
-    
-    print("✓ Data quality PASS")
-```
+Regression testing detects performance degradation on code changes. Baseline recordings (golden datasets) for each motion function are stored in `test/golden_datasets/`, tagged with git commit hash.
 
-**Regression Testing:**
-- Maintain reference recordings for each gait function
-- Automated CSV comparison on code changes
-- Alert on >5% performance degradation vs. baseline
+**Regression Metrics:**
 
----
+| Metric | Tolerance | Action if Exceeded |
+|--------|-----------|-------------------|
+| Position tracking error | ±5% vs baseline | Block merge |
+| Velocity tracking error | ±5% vs baseline | Block merge |
+| Control loop rate | ±10 Hz vs baseline | Block merge |
+| Phase offset accuracy | ±2° vs baseline | Block merge |
+| CPU / memory usage | +10% vs baseline | Warning, document reason |
 
-### Continuous Integration
-
-**GitHub Actions Workflow (`.github/workflows/ros2_test.yml`):**
-```yaml
-name: ROS2 Tests
-on: [push, pull_request]
-jobs:
-  test:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v3
-      - name: Install ROS2 Jazzy
-        run: |
-          sudo apt update
-          sudo apt install -y ros-jazzy-ros-base python3-pytest
-      - name: Build workspace
-        run: |
-          source /opt/ros/jazzy/setup.bash
-          colcon build
-      - name: Run unit tests
-        run: |
-          source install/setup.bash
-          pytest test/ -v
-```
-
-**Pre-commit Hooks:**
-- Linting (flake8, black)
-- Unit test execution
-- Launch file syntax validation
+**Automation:** `regression_test.py` compares new telemetry CSVs against golden datasets and outputs pass/fail per metric. GitHub Actions workflow runs regression suite on every pull request, generates comparison plots, and blocks merge if any metric exceeds tolerance.
 
 ---
 
 ### Performance Benchmarks
 
-**Baseline Metrics (Hardware: Jetson Orin Nano 8GB):**
 | Metric | Target | Measured |
 |--------|--------|----------|
-| Control loop rate | 400 Hz |  |
-| Control loop jitter | <1 ms std |  |
-| Position tracking error | <0.05 rad RMS |  |
-| Velocity tracking error | <0.1 rad/s RMS |  |
-| ROS2 topic latency (cmd→fb) | <5 ms |  |
-| CPU usage (3 nodes) | <30% |  |
-| Memory footprint | <500 MB |  |
+| Control loop rate | 400 Hz | |
+| Control loop jitter | <1 ms std | |
+| Position tracking error | <0.05 rad RMS | |
+| Velocity tracking error | <0.1 rad/s RMS | |
+| ROS2 topic latency (cmd→fb) | <5 ms | |
+| CPU usage (all nodes) | <30% | |
+| Memory footprint | <500 MB | |
+| IMU sample rate | 100 Hz | |
+| Camera frame rate | 30 FPS | |
+| Emergency stop response | <100 ms | |
+| Battery runtime (1 Hz flap) | >30 min | |
 
 ---
 
@@ -1182,7 +1000,6 @@ python3 recorder.py sim_test_session_1
 ---
 
 ## License
-
 
 
 ---
