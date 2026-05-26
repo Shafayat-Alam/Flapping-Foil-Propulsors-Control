@@ -644,7 +644,7 @@ System Design ──────────────────────
 Component Design ─────────────────────────────────► Component Verification (Phase 1)
     │                                                 ▲
     ▼                                                 │
-Implementation ───────────────────────────────────┘
+Implementation ───────────────────────────────────────┘
     │
     ▼
 Continuous Regression (Phase 4)
