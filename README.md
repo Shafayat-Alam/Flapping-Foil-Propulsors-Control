@@ -46,7 +46,7 @@ A ROS 2 Jazzy control stack for a bio-inspired blue crab robotic system with mul
 ## Node Specifications
 
 ### Application Layer (`crab.py`)
-**The System "Brain" - Gait Engine and Command Orchestrator**
+**Gait Engine**
 
 Manages behavioral state, command queuing, and motion function execution. Parses high-level robot commands and translates them into time-series motion trajectories.
 
@@ -109,8 +109,8 @@ Applies optional outer-loop PID correction on top of servo internal control. Act
 
 ---
 
-### Hardware Interface (`Dynamixel_XW430_T200_interface.py`)
-**The Hardware Driver - Dynamixel Protocol 2.0 Interface**
+### Hardware Interface 
+**Hardware Interface Node - Dynamixel Protocol 2.0**
 
 Exclusive owner of the serial bus. Translates ROS2 commands into Dynamixel SDK protocol packets with synchronized writes to eliminate inter-servo latency.
 
@@ -144,8 +144,7 @@ Exclusive owner of the serial bus. Translates ROS2 commands into Dynamixel SDK p
 
 ---
 
-### IMU Interface (`icm20948_interface.py`)
-**The IMU Driver - Adafruit ICM-20948 9-DOF IMU Node**
+**Hardware Interface Node - Adafruit ICM-20948 9-DOF IMU**
 
 Continuously reads and publishes accelerometer, gyroscope, and magnetometer data from the ICM-20948 IMU sensor over I2C.
 
@@ -171,8 +170,7 @@ Continuously reads and publishes accelerometer, gyroscope, and magnetometer data
 
 ---
 
-### Camera Interface (`stellarhd_interface.py`)
-**The Camera Driver - DWE StellarHD USB Camera Node**
+**Hardware Interface Node - DWE StellarHD USB Camera**
 
 Records video continuously and segments recordings based on robot command execution. Each command (from start to finish) is saved as a separate video file.
 
@@ -555,7 +553,7 @@ Closed-loop control will integrate vision (AprilTag) and IMU data with motor enc
 A Gazebo Harmonic simulation environment for kinematic testing and gait development without physical hardware. The simulation provides a **hybrid architecture** that auto-detects real servos and seamlessly merges physical and simulated feedback.
 
 **Simulation Capabilities:**
-- Full 4-DOF kinematic model (2 servos per side: pitch + roll)
+- Full 2-DOF kinematic model (2 servos per side: pitch + roll)
 - Visual rendering of robot geometry and motion
 - Simulated IMU (9-axis accelerometer/gyroscope/magnetometer)
 - Simulated camera (StellarHD, 1920×1080 @ 30fps)
@@ -619,7 +617,7 @@ Hybrid Configuration     →  Real feedback for IDs [1,2], Sim feedback for IDs 
    - Simulates StellarHD camera interface
 
 **URDF Model:**
-- 4-DOF robot with base_link and 4 revolute joints (left_pitch, left_roll, right_pitch, right_roll)
+- 2-DOF robot with base_link and 4 revolute joints (left_pitch, left_roll, right_pitch, right_roll)
 - Accurate mass and inertia properties from Fusion 360 CAD export
 - Visual meshes for all links including electronics box, servo housings, aerial truss structures, and camera bracket
 - Camera and IMU sensor links
