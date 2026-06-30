@@ -1,2 +1,0 @@
-timestamp_ms,cmd_id,sample,servo_id,goal,pos_rad,vel_rad_s,curr_A,volt_V
-1778195152597,25.0,29072.0,3,3.299999952316284,2.9820587635040283,0.2877698838710785,0.0,12.0

@@ -1,0 +1,537 @@
+# =====================================================================
+# verification.yaml — V&V activities (IEEE 1012) with procedures tailored
+# to the confirmed tool set (Round 5). Software V&V is unlimited (manual or
+# automated); hardware V&V uses only confirmed tools or documented substitutes.
+#
+# Each activity carries a TEST VENUE on the model->reality ladder and an
+# AUTOMATION level (Round 10):
+#   venue:    mil  = model-in-the-loop (pure logic, pytest, no physics)
+#             sil  = software-in-the-loop (real nodes vs the KINEMATIC Gazebo)
+#             hil  = hardware-in-the-loop (real servos/sensors, dry bench)
+#             water= reality (real vehicle in the real pool)
+#   automated: full | partial | none
+#   human_loop: true if an operator must act through the console during the test
+#   script: intended automated-test target (where automated)
+# =====================================================================
+
+# ---------------------------------------------------------------------
+# Verification strategy — the test-venue ladder + what the KINEMATIC sim
+# can and cannot close. This is why the integration plan gates dry->wet.
+# ---------------------------------------------------------------------
+verification_strategy:
+  principle: "Automate as far left on the ladder as the requirement allows; reserve water for what only reality can close."
+  venues:
+    - {id: mil,   name: "Model-in-the-loop (pure logic)", automatable: full,
+       desc: "Node logic exercised in isolation as pytest — no physics, no hardware. Fast, deterministic, runs in CI."}
+    - {id: sil,   name: "Software-in-the-loop (kinematic Gazebo)", automatable: full,
+       desc: "The real ROS nodes closed-loop against the kinematic Gazebo. Verifies state sequencing, scan/search geometry, topic plumbing, the safety gates and fail-safe transitions. AprilTags are placed in the sim world, so the perception pipeline (acquisition + range/bearing extraction) also runs in SIL."}
+    - {id: hil,   name: "Hardware-in-the-loop (dry bench)", automatable: partial,
+       desc: "Real servos/IMU/camera on the bench, out of water — bus enumeration, current limits, sensor streams, real detection range/lighting."}
+    - {id: water, name: "Reality (in-water)", automatable: none,
+       desc: "The real vehicle in the real pool — the only venue for thrust, buoyancy, watertightness, endurance, and hydrodynamic stability. Human-attended."}
+  human_in_the_loop:
+    desc: "Operator acts through the console (tasking, priority override, escalation acknowledgement); these cannot run fully unattended."
+    activities: [VER-005, VER-010, VER-011]
+  kinematic_sim:
+    is: "Gazebo model is KINEMATIC ONLY — joints move as commanded; there is no hydrodynamics, buoyancy, thrust, or contact drag."
+    can_verify: "State-machine sequencing, scan/search geometry, config-before-actuation, startup settle, command clamp, stale-detection reject, malformed-message reject, queue/preemption, fault->HOVERING, return-home logic, ACHIEVED declaration, and the perception pipeline — AprilTags are placed in the sim world, so SCANNING acquisition and range/bearing extraction run in SIL (VER-009)."
+    cannot_verify: "Closure rate / thrust (MOP-01), buoyancy (SYS-012), watertightness (SYS-004), endurance (SYS-013), REAL detection range/lighting (SYS-007), hydrodynamic control stability, servo current/thermal, RS-485 bus reality."
+    gap: "Perception-SIL is enabled by the AprilTags placed in the ocean.sdf world. What still cannot be closed in sim: real detection range/lighting (SYS-007 stays HIL), and thrust/buoyancy/leak/endurance (stay water) — these drive the dry->wet integration gates."
+
+activities:
+  - id: VER-001
+    verifies: SYS-001
+    method: Demonstration
+    integrity: high
+    phase: validation
+    venue: water
+    automated: none
+    human_loop: false
+    tool: "onboard logs (software)"
+    procedure: "Command a tag; observe SCANNING->LOCKING->HEADING->ACHIEVED in mission_status."
+    pass: "Vehicle reaches ACHIEVED autonomously, unpiloted."
+    status: open
+
+  - id: VER-002
+    verifies: SYS-002
+    method: Test
+    integrity: high
+    phase: validation
+    venue: water
+    automated: none
+    human_loop: false
+    tool: "onboard apriltag log + overhead phone camera"
+    procedure: "Log apriltag range vs time during HEADING; cross-check track with overhead video + pool scale."
+    pass: "Range decreases monotonically; mean closure rate > 0 recorded."
+    status: open
+
+  - id: VER-003
+    verifies: SYS-003
+    method: Test
+    integrity: critical
+    phase: verification
+    venue: water
+    automated: none
+    human_loop: false
+    tool: "tape measure + pool"
+    procedure: "Submerge to tape-measured 0.75 m for the run duration."
+    pass: "Operates at 0.75 m; no ingress (per VER-004)."
+    status: open
+
+  - id: VER-004
+    verifies: SYS-004
+    method: Test
+    integrity: critical
+    phase: verification
+    venue: water
+    automated: none
+    human_loop: false
+    tool: "pool + food-colouring dye + paper-towel/tissue witness"
+    procedure: "Place tissue witness inside enclosure; add dye near seams; submerge 0.75 m for >= mission duration; open and inspect witness. (No vacuum test — no syringe.)"
+    pass: "Zero water/dye on the interior witness."
+    status: open
+
+  - id: VER-005
+    verifies: SYS-005
+    method: Demonstration
+    integrity: medium
+    phase: verification
+    venue: sil
+    automated: partial
+    human_loop: true
+    tool: "operator console (software)"
+    procedure: "Feed a mission on /mission_input; observe /mission_status."
+    pass: "Mission accepted and status reported."
+    status: open
+
+  - id: VER-006b
+    verifies: SYS-006
+    method: Inspection
+    integrity: critical
+    phase: verification
+    venue: hil
+    automated: none
+    human_loop: false
+    tool: "digital multimeter + thermometer/IR gun"
+    procedure: "Power off: multimeter continuity from each electrical net to enclosure/water side (expect open). After a run: measure external surface temperature; confirm the (negatively buoyant) vehicle lifts cleanly off the floor."
+    pass: "No net-to-water continuity; surface touch-safe; retrievable by hand/pole."
+    status: open
+
+  - id: VER-007
+    verifies: SYS-007
+    method: Test
+    integrity: high
+    phase: verification
+    venue: hil
+    automated: partial
+    human_loop: false
+    tool: "tape measure + 200 mm waterproof tag on stand + onboard log"
+    procedure: "Place the tag at tape-measured 1.5 m; record apriltag_detections; sweep range to find the reliable detection limit."
+    pass: "Reliable detection at >= 1.5 m."
+    status: open
+
+  - id: VER-008
+    verifies: SYS-008
+    method: Demonstration
+    integrity: medium
+    phase: validation
+    venue: water
+    automated: none
+    human_loop: false
+    tool: "onboard apriltag log"
+    procedure: "On ACHIEVED, record the apriltag range."
+    pass: "Range <= 0.30 m at ACHIEVED."
+    status: open
+
+  - id: VER-009
+    verifies: SYS-009
+    method: Demonstration
+    integrity: medium
+    phase: validation
+    venue: sil
+    automated: partial
+    human_loop: false
+    tool: "kinematic Gazebo (tag in world) or onboard logs + overhead camera"
+    procedure: "Start with the tag outside the initial FOV; observe SCANNING until acquired. Runs in the kinematic sim with a tag placed in the world, then confirmed in water."
+    pass: "Vehicle finds a tag not initially visible."
+    status: open
+
+  - id: VER-010
+    verifies: SYS-010
+    method: Demonstration
+    integrity: high
+    phase: validation
+    venue: sil
+    automated: partial
+    human_loop: true
+    tool: "kinematic Gazebo or host-side + onboard logs"
+    procedure: "Make a tag unreachable; observe STUCK -> auto-retry -> operator escalation."
+    pass: "No-progress detected; retries then escalates; no erratic motion."
+    status: open
+
+  - id: VER-011
+    verifies: SYS-011
+    method: Demonstration
+    integrity: medium
+    phase: verification
+    venue: sil
+    automated: partial
+    human_loop: true
+    tool: "software (host-side or sim)"
+    procedure: "Feed a queue; issue a priority/override mission; observe preemption + bounded wait."
+    pass: "Queue executes in order; override preempts per the timeout."
+    status: open
+
+  - id: VER-012
+    verifies: SYS-012
+    method: Test
+    integrity: high
+    phase: verification
+    venue: water
+    automated: none
+    human_loop: false
+    tool: "digital scale + hanging/spring scale + calibration weights + pool"
+    procedure: "Weigh in air (W_air); hang fully submerged on the spring scale (W_sub); buoyant force F_b = W_air - W_sub. Release and observe."
+    pass: "F_b < W_air (net negative); vehicle sinks slowly, rests on floor, retrievable."
+    status: open
+
+  - id: VER-013
+    verifies: SYS-013
+    method: Test
+    integrity: medium
+    phase: verification
+    venue: water
+    automated: none
+    human_loop: false
+    tool: "flight 3S LiPo + digital multimeter + stopwatch"
+    procedure: "Full charge; run continuous autonomous ops; multimeter on pack voltage; stopwatch the run to low-voltage cutoff. (No bench supply — flight LiPo used.)"
+    pass: ">= 30 min continuous; clean low-voltage handling."
+    status: open
+
+  - id: VER-014
+    verifies: SYS-014
+    method: Demonstration
+    integrity: high
+    phase: validation
+    venue: water
+    automated: none
+    human_loop: false
+    tool: "onboard logs + overhead camera + tape-marked pool centre"
+    procedure: "After arrival, command return-to-home; observe the vehicle navigate to the pool centre via bearing + range. (Logic pre-verified in SIL by VER-U02.)"
+    pass: "Vehicle reaches home (pool centre) within tolerance."
+    status: open
+
+  - id: VER-015
+    verifies: SYS-015
+    method: Test
+    integrity: critical
+    phase: verification
+    venue: sil
+    automated: full
+    human_loop: false
+    tool: "host-side / kinematic sim + onboard joint_cmd log"
+    script: "test_controller.py::test_no_actuation_during_startup_settle"
+    procedure: "Power on; feed a mission immediately; watch joint_cmd / fins for the settling period."
+    pass: "No propulsor motion until the settle period (default 10 s) elapses."
+    status: open
+
+  - id: VER-016
+    verifies: SYS-016
+    method: Demonstration
+    integrity: critical
+    phase: verification
+    venue: sil
+    automated: full
+    human_loop: false
+    tool: "host-side / kinematic sim + onboard logs"
+    script: "test_controller.py::test_sensor_loss_transitions_to_hovering"
+    procedure: "Inject sensor loss / fault (e.g., stop IMU or detections); observe state -> HOVERING."
+    pass: "Vehicle enters stable hover; no uncommanded manoeuvre."
+    status: open
+
+  - id: VER-017
+    verifies: SYS-017
+    method: Test
+    integrity: critical
+    phase: verification
+    venue: sil
+    automated: full
+    human_loop: false
+    tool: "host-side + joint_cmd log"
+    script: "test_controller.py::test_joint_cmd_clamped_to_limits"
+    procedure: "Configure tight limits; command a gait that would exceed them; inspect joint_cmd values."
+    pass: "No joint_cmd ever exceeds the configured min/max."
+    status: open
+
+  - id: VER-018
+    verifies: SYS-018
+    method: Test
+    integrity: high
+    phase: verification
+    venue: sil
+    automated: full
+    human_loop: false
+    tool: "host-side"
+    script: "test_robustness.py::test_malformed_messages_rejected"
+    procedure: "Publish malformed mission/config/detection messages; observe node behaviour."
+    pass: "Nodes log an error, keep running, and issue no propulsor command from bad input."
+    status: open
+
+  - id: VER-019
+    verifies: SYS-019
+    method: Test
+    integrity: high
+    phase: verification
+    venue: sil
+    automated: full
+    human_loop: false
+    tool: "host-side + onboard logs"
+    script: "test_controller.py::test_stale_detections_ignored"
+    procedure: "Publish a detection then stop; confirm detections older than the threshold are ignored."
+    pass: "Controller does not act on stale detections (treats as no-detection)."
+    status: open
+
+  - id: VER-020
+    verifies: SYS-020
+    method: Test
+    integrity: critical
+    phase: verification
+    venue: sil
+    automated: full
+    human_loop: false
+    tool: "host-side + joint_cmd log"
+    script: "test_controller.py::test_no_actuation_before_config"
+    procedure: "Start controller without config; confirm no joint_cmd; send latched config; confirm actuation begins."
+    pass: "No propulsor command issued until the latched configuration is received."
+    status: open
+
+  # ---- Mechanical / electrical (Round 8) ----
+  - id: VER-M01
+    verifies: MEC-001
+    method: Inspection
+    integrity: medium
+    phase: verification
+    venue: hil
+    automated: none
+    human_loop: false
+    tool: "digital scale (g)"
+    procedure: "Weigh the assembled dry vehicle."
+    pass: "Dry mass within 1-3 kg; value recorded."
+    status: open
+  - id: VER-M02
+    verifies: MEC-002
+    method: Inspection
+    integrity: medium
+    phase: verification
+    venue: hil
+    automated: none
+    human_loop: false
+    tool: "visual + calipers"
+    procedure: "Confirm Garolite + CF-rod fins and the fitted surface (aerial/underwater)."
+    pass: "Materials and reinforcement as specified."
+    status: open
+  - id: VER-M03
+    verifies: MEC-003
+    method: Inspection
+    integrity: critical
+    phase: verification
+    venue: hil
+    automated: none
+    human_loop: false
+    tool: "visual"
+    procedure: "Inspect silicone bead at lid/seams and each cord grip (sealed + strain-relieved)."
+    pass: "Continuous silicone seal; all penetrations via sealed cord grips."
+    status: open
+  - id: VER-E01
+    verifies: ELE-001
+    method: Inspection
+    integrity: high
+    phase: verification
+    venue: hil
+    automated: none
+    human_loop: false
+    tool: "visual + multimeter"
+    procedure: "Confirm 3S ~2200 mAh pack; verify two separate rails (servo / compute)."
+    pass: "Correct pack; two rails present."
+    status: open
+  - id: VER-E02
+    verifies: ELE-002
+    method: Test
+    integrity: critical
+    phase: verification
+    venue: hil
+    automated: partial
+    human_loop: false
+    tool: "digital multimeter + stopwatch"
+    procedure: "Run to low charge; multimeter on pack voltage; confirm warning/shutdown at/above cutoff."
+    pass: "Warning or shutdown before voltage falls below ~9.0 V."
+    status: open
+  - id: VER-E03
+    verifies: ELE-003
+    method: Test
+    integrity: high
+    phase: verification
+    venue: hil
+    automated: partial
+    human_loop: false
+    tool: "digital multimeter (in series) or servo current telemetry"
+    procedure: "Measure per-servo current during 1 Hz flapping; briefly hand-stall and confirm limit holds."
+    pass: "Peak per-servo current recorded; limit holds on stall; no overheating."
+    status: open
+  - id: VER-E04
+    verifies: ELE-004
+    method: Test
+    integrity: critical
+    phase: verification
+    venue: hil
+    automated: none
+    human_loop: false
+    tool: "digital multimeter"
+    procedure: "Power off: continuity of cables (<1 ohm); check each net-to-net and net-to-enclosure for shorts; inspect insulation."
+    pass: "Continuity < 1 ohm; no shorts; no exposed conductors."
+    status: open
+  - id: VER-E05
+    verifies: ELE-005
+    method: Test
+    integrity: high
+    phase: verification
+    venue: hil
+    automated: full
+    human_loop: false
+    tool: "software (Dynamixel ping) + onboard log"
+    script: "test_servo_bus.py::test_all_four_ids_enumerate"
+    procedure: "Run the servo ping; confirm all 4 IDs respond."
+    pass: "4/4 servos enumerate on RS-485."
+    status: open
+
+  # ---- Unit tests (Round 10, MIL — pure-logic pytest, run in CI) ----
+  - id: VER-U01
+    verifies: SYS-002
+    method: Test
+    integrity: high
+    phase: verification
+    venue: mil
+    automated: full
+    human_loop: false
+    tool: "pytest (host-side)"
+    script: "test_motion_command.py::test_triangle_symmetry_and_bounds, ::test_sweep_profile"
+    procedure: "Unit-test the gait math: triangle wave symmetry and amplitude bounds; sweep profile center/span/phase."
+    pass: "Waveforms stay within [center +/- amplitude]; symmetric; sweep matches the specified profile."
+    status: open
+  - id: VER-U02
+    verifies: SYS-001
+    method: Test
+    integrity: high
+    phase: verification
+    venue: mil
+    automated: full
+    human_loop: false
+    tool: "pytest (host-side)"
+    script: "test_controller.py::test_state_transitions"
+    procedure: "Unit-test the controller state machine: SCANNING->LOCKING (STABLE_FRAMES), LOCKING->HEADING, HEADING->ACHIEVED, no-progress->STUCK, and return-home transitions on synthetic detections."
+    pass: "Every transition fires only under its documented condition; no illegal transitions."
+    status: open
+  - id: VER-U03
+    verifies: SYS-017
+    method: Test
+    integrity: critical
+    phase: verification
+    venue: mil
+    automated: full
+    human_loop: false
+    tool: "pytest (host-side)"
+    script: "test_controller.py::test_clamp_unit"
+    procedure: "Unit-test the per-joint clamp with values inside, at, and beyond min/max."
+    pass: "Output is clamped to [min,max] for every input; never exceeds limits."
+    status: open
+  - id: VER-U04
+    verifies: SYS-019
+    method: Test
+    integrity: high
+    phase: verification
+    venue: mil
+    automated: full
+    human_loop: false
+    tool: "pytest (host-side)"
+    script: "test_controller.py::test_stale_window_unit"
+    procedure: "Unit-test the staleness check at ages below, at, and above the threshold."
+    pass: "Detections older than the window are treated as no-detection."
+    status: open
+  - id: VER-U05
+    verifies: SYS-020
+    method: Test
+    integrity: critical
+    phase: verification
+    venue: mil
+    automated: full
+    human_loop: false
+    tool: "pytest (host-side)"
+    script: "test_controller.py::test_config_gate_unit"
+    procedure: "Unit-test that the command path returns no output until a valid config is set."
+    pass: "No command produced pre-config; commands produced post-config."
+    status: open
+  - id: VER-U06
+    verifies: SYS-011
+    method: Test
+    integrity: medium
+    phase: verification
+    venue: mil
+    automated: full
+    human_loop: false
+    tool: "pytest (host-side)"
+    script: "test_crab.py::test_queue_order, ::test_retry_count, ::test_priority_preempt, ::test_human_timeout"
+    procedure: "Unit-test the dispatcher: FIFO ordering, retry counting to the limit, priority preemption, and the human-decision timeout."
+    pass: "Queue order preserved; retries capped; priority preempts; timeout advances."
+    status: open
+  - id: VER-U07
+    verifies: SYS-007
+    method: Test
+    integrity: high
+    phase: verification
+    venue: mil
+    automated: full
+    human_loop: false
+    tool: "pytest (host-side)"
+    script: "test_apriltag.py::test_range_bearing_from_pose"
+    procedure: "Unit-test range/bearing computation from known tag poses/intrinsics (synthetic), independent of a live camera."
+    pass: "Computed range/bearing match the analytic values within tolerance."
+    status: open
+  - id: VER-U08
+    verifies: SYS-018
+    method: Test
+    integrity: high
+    phase: verification
+    venue: mil
+    automated: full
+    human_loop: false
+    tool: "pytest (host-side)"
+    script: "test_robustness.py::test_parser_rejects_bad_input"
+    procedure: "Unit-test message parsers with malformed mission/config/detection payloads."
+    pass: "Parsers raise/return cleanly; never yield an actuation command."
+    status: open
+  - id: VER-U09
+    verifies: SYS-008
+    method: Test
+    integrity: medium
+    phase: verification
+    venue: mil
+    automated: full
+    human_loop: false
+    tool: "pytest (host-side)"
+    script: "test_controller.py::test_achieved_declaration"
+    procedure: "Unit-test the ACHIEVED predicate at ranges/bearings around ARRIVE_DISTANCE and ALIGN_BEARING."
+    pass: "ACHIEVED only when range <= 0.30 m and bearing aligned."
+    status: open
+  - id: VER-U10
+    verifies: SYS-015
+    method: Test
+    integrity: critical
+    phase: verification
+    venue: mil
+    automated: full
+    human_loop: false
+    tool: "pytest (host-side)"
+    script: "test_controller.py::test_startup_settle_unit"
+    procedure: "Unit-test that no command is emitted while the monotonic clock is within the settle period."
+    pass: "Command path suppressed during settle; active after."
+    status: open

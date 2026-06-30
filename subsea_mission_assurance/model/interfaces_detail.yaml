@@ -1,0 +1,323 @@
+# =====================================================================
+# interfaces_detail.yaml — the interface-engineering layer.
+#
+#   IRD  -> interface_requirements   (what each interface SHALL do)
+#   IDD  -> interface_design         (HOW each interface is built — fields,
+#                                      rate, QoS, encoding, error handling)
+#   ICD  -> the controlled baseline that FREEZES IRD+IDD per interface
+#           (generated view 12_ICD.md; metadata + change control below)
+#
+# Builds on the interface REGISTER in architecture.yaml (the IF-* ids).
+# Timing/rate values tagged [TBC] are DERIVED from the current ROS code
+# (file:line cited in `source`) and must be confirmed by the PI.
+# =====================================================================
+
+interface_baseline:
+  version: "0.1 (draft)"
+  status: draft
+  control_authority: PI
+  change_policy: >
+    A baselined interface may change only by editing model/*.yaml, re-running
+    check.py (0 errors) and regenerating the ICD. Both the producer-side and
+    consumer-side component owners review the diff before the new ICD is frozen.
+  tbc_note: >
+    [TBC] values are read from the running ROS implementation, not yet ratified
+    as requirements. Confirm or override each before baselining (status: draft -> baselined).
+
+# ---------------------------------------------------------------------
+# IRD — Interface Requirements. Each SHALL constrains one interface.
+# category: timing | protocol | data | ordering | error
+# fields: id, interface, category, text, value, tbc, rationale,
+#         verification (optional, must be a known activity id), status
+# ---------------------------------------------------------------------
+interface_requirements:
+  # --- joint command path (safety-critical actuation) ---
+  - id: IRD-01
+    interface: IF-JCMD
+    category: timing
+    text: "The controller shall publish a complete joint-position command vector at the configured control rate (default 400 Hz)."
+    value: "400 Hz [TBC] (controller _control_loop timer)"
+    tbc: true
+    rationale: "A 1 Hz flapping stroke must be well oversampled for smooth gait; the servo bus applies commands at 500 Hz."
+    verification: VER-017
+    status: draft
+  - id: IRD-02
+    interface: IF-JCMD
+    category: data
+    text: "The joint_cmd payload shall be a Float32 vector of joint positions in radians, ordered by the latched actuator map, one element per active joint."
+    value: "Float32MultiArray; rad; actuator-map order"
+    tbc: false
+    rationale: "Deterministic element order is required so the right command reaches the right servo (SYS-020)."
+    verification: VER-020
+    status: draft
+  - id: IRD-03
+    interface: IF-JCMD
+    category: error
+    text: "Every joint_cmd element shall be clamped to the joint's configured mechanical min/max before it is published."
+    value: "clamp to [min,max] per joint"
+    tbc: false
+    rationale: "Prevents the worst credible software mishap — hardware self-damage from an out-of-limit command (SYS-017)."
+    verification: VER-017
+    status: draft
+  - id: IRD-04
+    interface: IF-JCMD
+    category: ordering
+    text: "No joint_cmd shall be published before the latched robot_config has been received."
+    value: "config-before-actuation gate"
+    tbc: false
+    rationale: "Actuating before the actuator map is known could drive the wrong joint (SYS-020)."
+    verification: VER-020
+    status: draft
+
+  # --- joint feedback ---
+  - id: IRD-05
+    interface: IF-JFB
+    category: timing
+    text: "The Dynamixel interface shall publish joint_feedback at the hardware loop rate (default 500 Hz), latest-sample-only."
+    value: "500 Hz [TBC], QoS depth=1 (Dynamixel hardware loop)"
+    tbc: true
+    rationale: "The controller needs fresh joint state; only the latest sample matters, so depth=1."
+    status: draft
+  - id: IRD-06
+    interface: IF-JFB
+    category: error
+    text: "The controller shall tolerate missing or late joint_feedback frames without commanding an uncommanded manoeuvre."
+    value: "graceful-degradation"
+    tbc: false
+    rationale: "A dropped feedback frame must not destabilise the loop (fail-safe HOVERING, SYS-016)."
+    verification: VER-016
+    status: draft
+
+  # --- perception path ---
+  - id: IRD-07
+    interface: IF-IMG
+    category: timing
+    text: "The camera interface shall republish frames at no more than the configured cap (default 15 Hz)."
+    value: "<= 15 Hz [TBC] (stellarhd publish_rate cap)"
+    tbc: true
+    rationale: "Bounds perception/compute load; the camera interface is the sole frame owner."
+    status: draft
+  - id: IRD-08
+    interface: IF-TAG
+    category: timing
+    text: "AprilTag detections shall be produced at the detector rate (default 30 Hz) and carry a timestamp."
+    value: "30 Hz [TBC] + per-message stamp (apriltag detect_rate)"
+    tbc: true
+    rationale: "Range/bearing must be fresh and stamped so the consumer can reject stale data."
+    status: draft
+  - id: IRD-09
+    interface: IF-TAG
+    category: error
+    text: "The controller shall ignore detections older than the configured staleness threshold (default 0.5 s)."
+    value: "0.5 s [TBC] stale-reject window (controller stale check)"
+    tbc: true
+    rationale: "Acting on stale detections can drive erratic motion into pool walls/hardware (SYS-019)."
+    verification: VER-019
+    status: draft
+
+  # --- IMU ---
+  - id: IRD-10
+    interface: IF-IMU
+    category: timing
+    text: "The IMU interface shall publish imu_data at the configured sample rate (default 100 Hz) as sensor_msgs/Imu."
+    value: "100 Hz [TBC] (icm20948 sample_rate)"
+    tbc: true
+    rationale: "Attitude/heading reference for the control loop."
+    status: draft
+
+  # --- mission / config control plane ---
+  - id: IRD-11
+    interface: IF-CFG
+    category: ordering
+    text: "robot_config shall be published once on a latched (transient-local, depth 1) topic so any node that starts later still receives the configuration."
+    value: "QoS TRANSIENT_LOCAL, depth=1 (latched)"
+    tbc: false
+    rationale: "The controller may start before/after the dispatcher; the config must survive that race (SYS-020)."
+    verification: VER-020
+    status: draft
+  - id: IRD-12
+    interface: IF-MISSTAT
+    category: timing
+    text: "mission_status shall be published on each state change and rate-limited to a minimum spacing (default 5 Hz)."
+    value: "<= 5 Hz [TBC] (controller STATUS_PERIOD 0.2 s)"
+    tbc: true
+    rationale: "Operator visibility without flooding the console."
+    verification: VER-005
+    status: draft
+  - id: IRD-13
+    interface: IF-MISIN
+    category: error
+    text: "Malformed mission_input messages shall be rejected without crashing the dispatcher and without commanding the propulsors."
+    value: "reject-and-continue"
+    tbc: false
+    rationale: "Bad operator input must not produce undefined actuation (SYS-018)."
+    verification: VER-018
+    status: draft
+
+  # --- physical buses ---
+  - id: IRD-14
+    interface: IF-RS485
+    category: protocol
+    text: "The servo bus shall run Dynamixel Protocol 2.0 over RS-485 at 1 Mbaud via the U2D2 adapter, addressing four servos."
+    value: "RS-485, 1,000,000 baud, Protocol 2.0, 4 IDs"
+    tbc: false
+    rationale: "Actuation bus integrity underpins all motion (ELE-005)."
+    verification: VER-E05
+    status: draft
+  - id: IRD-15
+    interface: IF-I2C
+    category: protocol
+    text: "The IMU shall be addressed on I2C at 0x69."
+    value: "I2C addr 0x69"
+    tbc: false
+    rationale: "Deterministic bus addressing for the attitude sensor."
+    status: draft
+  - id: IRD-16
+    interface: IF-MISCMD
+    category: ordering
+    text: "mission_cmd shall carry exactly one active mission and the controller shall act only on the most recent message."
+    value: "single active mission; latest-wins"
+    tbc: false
+    rationale: "A new dispatch or priority override must cleanly supersede the running mission (SYS-011)."
+    verification: VER-011
+    status: draft
+  - id: IRD-17
+    interface: IF-TLM
+    category: data
+    text: "telemetry shall be a Float32 vector for monitoring only; its loss shall not affect vehicle control."
+    value: "Float32MultiArray; non-safety, lossy-tolerant"
+    tbc: false
+    rationale: "Console telemetry is observational; dropping it must never perturb the control loop."
+    status: draft
+  - id: IRD-18
+    interface: IF-USB
+    category: protocol
+    text: "The camera shall stream over USB UVC and the camera interface shall recover the stream on disconnect without crashing."
+    value: "USB UVC; reconnect-on-loss"
+    tbc: false
+    rationale: "Camera dropout must degrade perception gracefully, not take down the node (fail-safe SYS-016)."
+    verification: VER-016
+    status: draft
+
+# ---------------------------------------------------------------------
+# IDD — Interface Design Detail (one entry per IF-* in architecture.yaml).
+# fields: id, direction, encoding, rate, qos, units, range, error_handling, source
+# ---------------------------------------------------------------------
+interface_design:
+  - id: IF-MISIN
+    direction: "C-OPC -> C-CRAB (tasking)"
+    encoding: "std_msgs/String — mission token / tag id (text protocol)"
+    rate: "event (operator-driven)"
+    qos: "depth=50, RELIABLE"
+    units: "n/a (text)"
+    range: "valid tag ids / commands"
+    error_handling: "unknown token logged and ignored; no crash, no actuation"
+    source: "crab.py:105"
+  - id: IF-MISCMD
+    direction: "C-CRAB -> C-CTRL (active mission)"
+    encoding: "std_msgs/String — the dispatched mission for execution"
+    rate: "event (per dispatch)"
+    qos: "depth=10, RELIABLE"
+    units: "n/a (text)"
+    range: "single active mission token"
+    error_handling: "controller validates before acting"
+    source: "crab.py:104, controller.py:166"
+  - id: IF-MISSTAT
+    direction: "C-CTRL -> C-CRAB (+console) (status)"
+    encoding: "std_msgs/String — state machine status (SCANNING/LOCKING/HEADING/ACHIEVED/STUCK/HOVERING)"
+    rate: "on change, <= 5 Hz (STATUS_PERIOD 0.2 s)"
+    qos: "depth=10 (pub) / depth=50 (crab sub), RELIABLE"
+    units: "n/a (text)"
+    range: "defined state set"
+    error_handling: "idempotent; latest status wins"
+    source: "controller.py:83,173; crab.py:106"
+  - id: IF-CFG
+    direction: "C-CRAB -> C-CTRL (latched config)"
+    encoding: "std_msgs/String (JSON) — actuator map, modes, rates, nominal gait"
+    rate: "one-shot at startup (re-latched on change)"
+    qos: "TRANSIENT_LOCAL, depth=1 (latched)"
+    units: "mixed (config fields)"
+    range: "valid robot configuration"
+    error_handling: "controller does not actuate until received (SYS-020)"
+    source: "crab.py:101-103,124-129; controller.py:163-165,196"
+  - id: IF-JCMD
+    direction: "C-CTRL -> C-DXLIF (command)"
+    encoding: "std_msgs/Float32MultiArray — joint positions, actuator-map order"
+    rate: "400 Hz produce [TBC]; applied to bus at 500 Hz hardware loop"
+    qos: "depth=1, RELIABLE (latest-only)"
+    units: "radians"
+    range: "per-joint mechanical [min,max], clamped (SYS-017)"
+    error_handling: "out-of-range clamped; none published before config (SYS-020)"
+    source: "controller.py:172,176; Dynamixel_XW430_T200_interface.py:97,100-101"
+  - id: IF-JFB
+    direction: "C-DXLIF -> C-CTRL (feedback)"
+    encoding: "std_msgs/Float32MultiArray — present joint positions"
+    rate: "500 Hz hardware loop [TBC]"
+    qos: "depth=1, RELIABLE (latest-only)"
+    units: "radians"
+    range: "joint travel"
+    error_handling: "controller tolerates dropped/late frames (IRD-06)"
+    source: "Dynamixel_XW430_T200_interface.py:98; controller.py:167"
+  - id: IF-IMU
+    direction: "C-IMUIF -> C-CTRL (attitude)"
+    encoding: "sensor_msgs/Imu — accel + gyro (+ orientation)"
+    rate: "100 Hz [TBC] (sample_rate)"
+    qos: "depth=10, RELIABLE"
+    units: "m/s^2, rad/s"
+    range: "sensor full-scale"
+    error_handling: "loss of stream -> HOVERING fail-safe (SYS-016)"
+    source: "icm20948_interface.py:44,63; controller.py:168"
+  - id: IF-TAG
+    direction: "C-APRIL -> C-CTRL (range/bearing)"
+    encoding: "std_msgs/Float32MultiArray — [tag_id, range, bearing, ...] + stamp"
+    rate: "30 Hz [TBC] (detect_rate, camera-bound)"
+    qos: "depth=10, RELIABLE"
+    units: "m, rad"
+    range: ">= 1.5 m detection (SYS-007)"
+    error_handling: "detections older than 0.5 s ignored (SYS-019)"
+    source: "apriltag_interface.py:58,77; controller.py:169,346"
+  - id: IF-IMG
+    direction: "C-CAMIF -> C-APRIL (raw frames)"
+    encoding: "sensor_msgs/Image — raw frames for perception"
+    rate: "<= 15 Hz cap [TBC] (publish_rate)"
+    qos: "depth=10, RELIABLE"
+    units: "pixels"
+    range: "camera resolution"
+    error_handling: "camera interface is sole frame owner; drops frames above cap"
+    source: "stellarhd_interface.py:61,107,111; apriltag_interface.py:92"
+  - id: IF-TLM
+    direction: "C-CTRL -> C-OPC (telemetry)"
+    encoding: "std_msgs/Float32MultiArray — flattened telemetry vector"
+    rate: "loop-paced"
+    qos: "depth=10, RELIABLE"
+    units: "mixed"
+    range: "n/a"
+    error_handling: "lossy ok (monitoring only)"
+    source: "controller.py:174"
+  - id: IF-RS485
+    direction: "C-COMPUTE -> C-SERVO (actuation bus)"
+    encoding: "Dynamixel Protocol 2.0 frames (sync/bulk read+write)"
+    rate: "1,000,000 baud; 500 Hz hardware loop"
+    qos: "n/a (physical)"
+    units: "protocol register values"
+    range: "4 servo IDs"
+    error_handling: "comm result checked per packet; failed IDs logged"
+    source: "Dynamixel_XW430_T200_interface.py:67-68,85-88"
+  - id: IF-I2C
+    direction: "C-COMPUTE -> C-IMU (sensor bus)"
+    encoding: "I2C register reads (accel/gyro/mag)"
+    rate: "100 Hz sampling"
+    qos: "n/a (physical)"
+    units: "register values"
+    range: "addr 0x69"
+    error_handling: "read failure -> skip sample / log"
+    source: "icm20948_interface.py"
+  - id: IF-USB
+    direction: "C-CAM -> C-COMPUTE (video in)"
+    encoding: "USB UVC video stream"
+    rate: "camera native; capped on republish"
+    qos: "n/a (physical)"
+    units: "frames"
+    range: "UVC modes"
+    error_handling: "capture thread join on shutdown; reconnect on loss"
+    source: "stellarhd_interface.py"

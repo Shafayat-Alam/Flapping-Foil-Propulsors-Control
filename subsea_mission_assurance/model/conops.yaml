@@ -1,0 +1,127 @@
+# =====================================================================
+# conops.yaml — Concept of Operations: environment, operational phases
+# (mapped to the OPM processes/states), and named validation scenarios.
+# Round 6 decisions: several tags at known spots, sequence-then-return
+# profile, hand-place + 10 s settle, end = returned home + recovered.
+# =====================================================================
+conops:
+  environment:
+    site: "Backyard pool — known, measured, calm, clear water"
+    depth_max_m: 0.75
+    tags: "Several waterproofed AprilTags (200 mm, tag36h11) at known/surveyed spots; operator commands which one."
+    home: "Pool centre — fixed, tape-marked"
+    lighting: "Daytime / controlled; tags well lit"
+
+  phases:
+    - {id: PH-0, name: "Commission",      opm: "(readiness)",         state: "Stowed",
+       narrative: "ONE-TIME before first operational mission: Operational Readiness Review — calibration, safety-behaviour and leak evidence reviewed, all risks at Low; PI declares readiness, Safety Observer concurs. (Recommission after any hardware/firmware change.)"}
+    - {id: PH-1, name: "Deploy & Settle", opm: "(settle)",            state: "Stowed",
+       narrative: "Hand-placed from poolside; ~10 s startup settle; no propulsor motion."}
+    - {id: PH-2, name: "Task & Search",   opm: "Dispatching/Searching/Detecting", state: "Searching",
+       narrative: "Operator queues tags; vehicle sweeps until the commanded tag is detected (>= 1.5 m)."}
+    - {id: PH-3, name: "Home",            opm: "Homing",              state: "Homing -> Arrived",
+       narrative: "Vehicle reduces range/bearing and declares ACHIEVED at <= 0.30 m."}
+    - {id: PH-4, name: "Next in Sequence", opm: "Dispatching/Searching/Homing", state: "Searching",
+       narrative: "Dispatcher advances to the next queued tag; search + home repeat."}
+    - {id: PH-5, name: "Return Home",     opm: "Returning",           state: "AtHome",
+       narrative: "After the sequence, vehicle returns to pool-centre home via bearing + range."}
+    - {id: PH-6, name: "Recover",         opm: "Recovering",          state: "Stowed",
+       narrative: "Negatively buoyant vehicle rests at home on the floor; hand/pole recovery; post-run leak inspection."}
+
+  scenarios:
+    - id: SC-0
+      name: "Watertight integrity (every run)"
+      phase: "PH-1 / PH-6"
+      narrative: "Pre/post each deployment: tissue witness + dye; submerge to 0.75 m; inspect for ingress."
+      traces: [SYS-003, SYS-004]
+      activities: [VER-003, VER-004]
+    - id: SC-1
+      name: "Deploy & settle"
+      phase: "PH-1"
+      narrative: "Hand-place; confirm no propulsor motion for the settle period; vehicle safe to handle."
+      traces: [SYS-015, SYS-006]
+      activities: [VER-015, VER-006b]
+    - id: SC-2
+      name: "Acquire & approach (primary MOE)"
+      phase: "PH-2 / PH-3"
+      narrative: "Command a tag; vehicle detects (>= 1.5 m), locks, homes, declares ACHIEVED at <= 0.30 m."
+      traces: [SYS-001, SYS-002, SYS-007, SYS-008]
+      mops: [MOP-01, MOP-02, MOP-03]
+      activities: [VER-001, VER-002, VER-007, VER-008]
+    - id: SC-3
+      name: "Search (tag not in initial FOV)"
+      phase: "PH-2"
+      narrative: "Tag outside initial view; vehicle sweeps until it acquires."
+      traces: [SYS-009]
+      activities: [VER-009]
+    - id: SC-4
+      name: "Tag sequence + preemption"
+      phase: "PH-4"
+      narrative: "Operator queues several tags; vehicle completes them in order, with priority override + bounded wait."
+      traces: [SYS-005, SYS-011]
+      activities: [VER-005, VER-011]
+    - id: SC-5
+      name: "Stuck & escalate"
+      phase: "PH-2 / PH-3"
+      narrative: "A tag is unreachable; vehicle detects no progress, auto-retries, then escalates to the operator."
+      traces: [SYS-010]
+      activities: [VER-010]
+    - id: SC-6
+      name: "Return home"
+      phase: "PH-5"
+      narrative: "After the sequence, vehicle navigates to pool-centre home via bearing + range."
+      traces: [SYS-014]
+      activities: [VER-014]
+    - id: SC-7
+      name: "Recover"
+      phase: "PH-6"
+      narrative: "Vehicle rests at home on the floor; hand/pole recovery; touch-safe; post-run leak check."
+      traces: [SYS-012, SYS-006]
+      activities: [VER-012, VER-006b]
+    - id: SC-8
+      name: "Endurance session"
+      phase: "PH-1 .. PH-6"
+      narrative: "A full deployment runs continuously; confirm >= 30 min before recovery."
+      traces: [SYS-013]
+      activities: [VER-013]
+
+# ---------------------------------------------------------------------
+# Commissioning — transition to operations (16.842 Ses10 / NASA SE
+# "transition" + "operations" processes). The one-time readiness gate
+# between integration (INT-4) and operations (PH-1..PH-6). It aggregates
+# evidence already in the model; `evidence` items reference verification
+# activities (VER-*), integration stages (INT-*), or risks (R-*).
+# ---------------------------------------------------------------------
+commissioning:
+  authority: "PI declares readiness; Safety Observer (ACT-SAF) concurs before the first operational mission."
+  gate: >
+    Operational Readiness Review (ORR). The vehicle is NOT cleared for operational
+    (autonomous, untethered, full-depth) missions until every checklist item has
+    objective evidence and all technical risks sit at Low residual (appetite = NONE).
+  recommission: "Re-run the ORR after any change to the seals, wiring, firmware, gait gains, or calibration."
+  exit: "ORR signed -> vehicle is COMMISSIONED -> PH-1 operations may begin."
+  checklist:
+    - {id: COM-01, category: readiness, item: "Integration complete through INT-4 (every stage exit gate passed).",
+       evidence: [INT-4], status: open}
+    - {id: COM-02, category: safety, item: "Watertight leak gate passed — unpowered immersion to 0.75 m, zero ingress on the interior witness.",
+       evidence: [VER-004, VER-M03], status: open}
+    - {id: COM-03, category: safety, item: "Safety behaviours demonstrated: startup settle, command clamp, config-before-actuation, stale-reject, fault->HOVERING.",
+       evidence: [VER-015, VER-016, VER-017, VER-019, VER-020], status: open}
+    - {id: COM-04, category: readiness, item: "All four servos enumerate on RS-485 (Protocol 2.0, 1 Mbaud).",
+       evidence: [VER-E05], status: open}
+    - {id: COM-05, category: safety, item: "Electrical integrity: no net-to-water continuity, intact insulation, touch-safe surface.",
+       evidence: [VER-E04, VER-006b], status: open}
+    - {id: COM-06, category: calibration, item: "Camera intrinsics calibrated and AprilTag edge size set to DP-TAG-SIZE (0.200 m). NOTE: code default tag_size=0.10 must be updated to match.",
+       evidence: [VER-007], status: open}
+    - {id: COM-07, category: calibration, item: "Detection range confirmed >= 1.5 m in the actual pool water/lighting.",
+       evidence: [VER-007], status: open}
+    - {id: COM-08, category: calibration, item: "Servo zero positions and per-joint mechanical limits configured and loaded in the latched robot_config.",
+       evidence: [VER-017], status: open}
+    - {id: COM-09, category: calibration, item: "Buoyancy trimmed slightly negative (submerged-weight test).",
+       evidence: [VER-012], status: open}
+    - {id: COM-10, category: calibration, item: "Home (pool centre) surveyed and tag positions measured/recorded.",
+       evidence: [VER-014], status: open}
+    - {id: COM-11, category: risk, item: "Every technical risk burned down to Low residual before powered in-water operation.",
+       evidence: [R-LEAK, R-PROP, R-PERC, R-GEOM, R-CTRL, R-PWR, R-BUOY], status: open}
+    - {id: COM-12, category: readiness, item: "Endurance pack charged; >= 30 min continuous operation demonstrated.",
+       evidence: [VER-013], status: open}

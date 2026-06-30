@@ -2,7 +2,7 @@
 <robot name="prototype" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
 <xacro:include filename="$(find prototype_description)/urdf/materials.xacro" />
-<xacro:include filename="$(find prototype_description)/urdf/prototype.trans" />
+<xacro:include filename="$(find prototype_description)/urdf/prototype.ros2control" />
 <xacro:include filename="$(find prototype_description)/urdf/prototype.gazebo" />
 <link name="base_link">
   <inertial>
@@ -34,14 +34,14 @@
   <visual>
     <origin xyz="0.287891 -0.110458 -0.0294" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/stellarhd-wetlink_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/stellarhd-wetlink.stl" scale="0.001 0.001 0.001"/>
     </geometry>
     <material name="silver"/>
   </visual>
   <collision>
     <origin xyz="0.287891 -0.110458 -0.0294" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/stellarhd-wetlink_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/stellarhd-wetlink.stl" scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
 </link>
@@ -55,14 +55,14 @@
   <visual>
     <origin xyz="0.294041 -0.110458 -0.00315" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/stellarhd-bracket_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/stellarhd-bracket.stl" scale="0.001 0.001 0.001"/>
     </geometry>
     <material name="silver"/>
   </visual>
   <collision>
     <origin xyz="0.294041 -0.110458 -0.00315" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/stellarhd-bracket_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/stellarhd-bracket.stl" scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
 </link>
@@ -76,14 +76,14 @@
   <visual>
     <origin xyz="0.579463 -0.579463 -0.0" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/left_Aerial_Truss_Structure3_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/left_Aerial_Truss_Structure3.stl" scale="0.001 0.001 0.001"/>
     </geometry>
     <material name="silver"/>
   </visual>
   <collision>
     <origin xyz="0.579463 -0.579463 -0.0" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/left_Aerial_Truss_Structure3_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/left_Aerial_Truss_Structure3.stl" scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
 </link>
@@ -97,14 +97,14 @@
   <visual>
     <origin xyz="0.039519 -0.038944 -0.00315" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/right_Aerial_Truss_Structure3_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/right_Aerial_Truss_Structure3.stl" scale="0.001 0.001 0.001"/>
     </geometry>
     <material name="silver"/>
   </visual>
   <collision>
     <origin xyz="0.039519 -0.038944 -0.00315" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/right_Aerial_Truss_Structure3_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/right_Aerial_Truss_Structure3.stl" scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
 </link>
@@ -118,14 +118,14 @@
   <visual>
     <origin xyz="0.442491 -0.0 -0.001575" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/electronics_box_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/electronics_box.stl" scale="0.001 0.001 0.001"/>
     </geometry>
     <material name="silver"/>
   </visual>
   <collision>
     <origin xyz="0.442491 -0.0 -0.001575" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/electronics_box_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/electronics_box.stl" scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
 </link>
@@ -139,14 +139,14 @@
   <visual>
     <origin xyz="0.123682 -0.011712 -0.001575" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/right_roll_servo_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/right_roll_servo.stl" scale="0.001 0.001 0.001"/>
     </geometry>
     <material name="silver"/>
   </visual>
   <collision>
     <origin xyz="0.123682 -0.011712 -0.001575" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/right_roll_servo_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/right_roll_servo.stl" scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
 </link>
@@ -160,14 +160,14 @@
   <visual>
     <origin xyz="0.101182 0.000788 -0.001575" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/right_pitch_servo_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/right_pitch_servo.stl" scale="0.001 0.001 0.001"/>
     </geometry>
     <material name="silver"/>
   </visual>
   <collision>
     <origin xyz="0.101182 0.000788 -0.001575" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/right_pitch_servo_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/right_pitch_servo.stl" scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
 </link>
@@ -181,14 +181,14 @@
   <visual>
     <origin xyz="0.168363 0.016213 0.004387" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/right_pitch_FRX430-H105K_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/right_pitch_FRX430-H105K.stl" scale="0.001 0.001 0.001"/>
     </geometry>
     <material name="silver"/>
   </visual>
   <collision>
     <origin xyz="0.168363 0.016213 0.004387" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/right_pitch_FRX430-H105K_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/right_pitch_FRX430-H105K.stl" scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
 </link>
@@ -202,14 +202,14 @@
   <visual>
     <origin xyz="0.4943 -0.011712 -0.001575" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/left_pitch_servo_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/left_pitch_servo.stl" scale="0.001 0.001 0.001"/>
     </geometry>
     <material name="silver"/>
   </visual>
   <collision>
     <origin xyz="0.4943 -0.011712 -0.001575" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/left_pitch_servo_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/left_pitch_servo.stl" scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
 </link>
@@ -223,14 +223,14 @@
   <visual>
     <origin xyz="0.5153 0.000788 -0.001575" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/left_FRX430-S105K_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/left_FRX430-S105K.stl" scale="0.001 0.001 0.001"/>
     </geometry>
     <material name="silver"/>
   </visual>
   <collision>
     <origin xyz="0.5153 0.000788 -0.001575" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/left_FRX430-S105K_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/left_FRX430-S105K.stl" scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
 </link>
@@ -244,14 +244,14 @@
   <visual>
     <origin xyz="0.5168 0.000788 -0.001575" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/left_roll_servo_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/left_roll_servo.stl" scale="0.001 0.001 0.001"/>
     </geometry>
     <material name="silver"/>
   </visual>
   <collision>
     <origin xyz="0.5168 0.000788 -0.001575" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/left_roll_servo_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/left_roll_servo.stl" scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
 </link>
@@ -265,14 +265,14 @@
   <visual>
     <origin xyz="-0.034 0.016213 -0.007537" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/left_FRX430-H105K_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/left_FRX430-H105K.stl" scale="0.001 0.001 0.001"/>
     </geometry>
     <material name="silver"/>
   </visual>
   <collision>
     <origin xyz="-0.034 0.016213 -0.007537" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/left_FRX430-H105K_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/left_FRX430-H105K.stl" scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
 </link>
@@ -286,14 +286,14 @@
   <visual>
     <origin xyz="0.102682 0.000788 -0.001575" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/right_FRX430-S105K_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/right_FRX430-S105K.stl" scale="0.001 0.001 0.001"/>
     </geometry>
     <material name="silver"/>
   </visual>
   <collision>
     <origin xyz="0.102682 0.000788 -0.001575" rpy="0 0 0"/>
     <geometry>
-      <mesh filename="file://$(find prototype_description)/meshes/right_FRX430-S105K_1.stl" scale="0.001 0.001 0.001"/>
+      <mesh filename="file://$(find prototype_description)/meshes/right_FRX430-S105K.stl" scale="0.001 0.001 0.001"/>
     </geometry>
   </collision>
 </link>

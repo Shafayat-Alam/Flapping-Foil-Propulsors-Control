@@ -1,0 +1,123 @@
+# =====================================================================
+# program.yaml — apex of the model (the source of truth)
+# Established in Interview Round 1.
+# =====================================================================
+program:
+  name: "Soft Propulsors UUV"
+  intent: research_prototype          # Round 1
+  description: >
+    Small bio-inspired unmanned underwater vehicle that swims with two soft
+    flapping-foil propulsors and autonomously homes to AprilTag fiducials,
+    operated in a shallow (<=0.75 m) controlled test environment.
+  governing_standards:
+    - NASA-SP-2007-6105 Rev1 (NASA Systems Engineering Handbook)
+    - ISO/IEC/IEEE 29148-2018 (Requirements engineering)
+    - IEEE 1012-2016 (Verification & Validation)
+    - NASA-GB-8719.13 (Software Safety)
+  lifecycle_tailoring: >
+    Research/bench prototype: NASA life-cycle Phases A-F are collapsed. The
+    technical processes (stakeholder expectations -> requirements -> design ->
+    integration -> verification -> validation) are retained but executed once,
+    lightly, with emphasis on a working vehicle and objective V&V evidence.
+
+# System-of-Interest boundary (Round 1: vehicle + operator + test environment)
+system_of_interest:
+  name: "Soft Propulsors UUV operational system"
+  boundary_statement: >
+    The system comprises the UUV vehicle, the operator console, and the test
+    environment (tank + AprilTag setup). The vehicle is the primary product;
+    the operator console and test environment are enabling elements required to
+    demonstrate the capability.
+  contains:
+    - id: EL-VEH
+      name: "UUV vehicle"
+      role: system-of-interest
+    - id: EL-OPC
+      name: "Operator console"
+      role: enabling
+      note: "Terminal feeding missions / reading status / issuing stop."
+    - id: EL-ENV
+      name: "Test environment"
+      role: enabling
+      note: "Tank (<=0.75 m) + waterproofed AprilTags on stands."
+
+external_actors:
+  - id: ACT-OPR
+    name: "Operator / test conductor"
+  - id: ACT-SAF
+    name: "Safety observer"
+
+# V&V resourcing policy (governs how verification activities may be executed).
+verification_policy:
+  software: "Unlimited. Any form acceptable — manual or automated (host-side, sim, on-target)."
+  hardware: >
+    Constrained to basic shop tools plus some university-lab equipment. Each
+    hardware activity's required instrument MUST be confirmed available before
+    it is baselined; if unavailable, substitute a documented low-cost method or
+    mark the activity BLOCKED.
+  confirmed_tools:         # Round 5
+    - digital calipers
+    - digital scale (g)
+    - hanging/spring scale (force)
+    - tape measure / ruler
+    - digital multimeter
+    - food coloring / dye
+    - thermometer / IR temp gun
+    - overhead phone camera + mount
+    - waterproof AprilTags + stands
+    - stopwatch / phone timer
+    - known calibration weights
+  unavailable_tools:       # Round 5 — procedures must avoid or substitute these
+    - bench DC power supply       # -> use the flight 3S LiPo for all powered tests
+    - oscilloscope                # -> rely on multimeter + software logs
+    - clamp/inline current meter  # -> multimeter in series, or servo present-current telemetry
+    - syringe + tubing (vacuum)   # -> no dry-side vacuum decay; use immersion + dye + witness
+    - desiccant / humidity card   # -> paper-towel / tissue ingress witness
+
+# Measures of Effectiveness / Performance (Round 1: primary MOE = tag homing)
+moes:
+  - id: MOE-01
+    name: "Autonomous tag homing"
+    primary: true
+    statement: >
+      The vehicle shall autonomously detect a commanded AprilTag and reduce its
+      range and bearing error to that tag without operator piloting.
+    mops: [MOP-01, MOP-02, MOP-03]
+
+mops:
+  - id: MOP-01
+    name: "Range-reduction rate"
+    moe: MOE-01
+    definition: "Mean closure rate toward the target tag during HEADING."
+    target: "> 0 (closure demonstrated; mean rate recorded)"   # Round 2
+    units: "m/s"
+    measurement: "Onboard apriltag_detections range time series in the known/measured pool."  # Round 4
+  - id: MOP-02
+    name: "Acquisition success rate"
+    moe: MOE-01
+    definition: "Fraction of runs where the commanded tag is detected, locked, and approached."
+    target: ">= 0.90 (>= 27 of 30 runs)"     # Round 2 + Round 4 sample size
+    units: "fraction of runs"
+    measurement: "30 demonstration runs; count successful acquisition+approach."  # Round 4
+  - id: MOP-03
+    name: "Final standoff"
+    moe: MOE-01
+    definition: "Distance to tag at mission-achieved declaration."
+    target: "<= 0.30"     # Round 2 (matches controller ARRIVE_DISTANCE)
+    units: "m"
+    measurement: "Onboard apriltag range at ACHIEVED, cross-checked against known pool geometry."  # Round 4
+
+# Defining parameters set in interviews (drive requirements + implementation).
+design_parameters:
+  - {id: DP-TAG-FAMILY, name: "AprilTag family", value: "tag36h11"}
+  - {id: DP-TAG-SIZE,   name: "AprilTag edge size", value: 0.200, units: "m"}   # Round 2 (200 mm)
+  - {id: DP-DET-RANGE,  name: "Required detection range (min)", value: 1.5, units: "m"}  # Round 2
+  - {id: DP-ARRIVE,     name: "Arrived standoff", value: 0.30, units: "m"}      # Round 2
+  # Round 4
+  - {id: DP-HOME,       name: "Home position", value: "pool centre (known/measured)"}
+  - {id: DP-NAV,        name: "Navigation cue", value: "AprilTag bearing (cardinal) + range"}
+  - {id: DP-BUOY,       name: "Buoyancy", value: "slightly negative (rests on pool floor when unpowered)"}
+  - {id: DP-ENDUR,      name: "Endurance (max run)", value: 30, units: "min"}
+  - {id: DP-RUNS,       name: "Validation runs", value: 30}
+# NOTE: DP-TAG-SIZE (0.200) differs from the current code default
+# apriltag_interface tag_size=0.10 — implementation should be updated to match.

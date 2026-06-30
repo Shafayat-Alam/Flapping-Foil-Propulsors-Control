@@ -1,0 +1,240 @@
+# =====================================================================
+# requirements.yaml — System requirements (ISO 29148 well-formed "shall").
+# SEED ONLY (status: draft) — derived from the primary MOE + hard constraints
+# established in Round 1. Full requirement set is built in later rounds.
+#
+# Fields: id, text, type, rationale, parent (StakeholderExp | MOE | req),
+#         allocated_to (component/element ids), verification (T/A/I/D), status.
+# =====================================================================
+requirements:
+  - id: SYS-001
+    text: "The system shall autonomously detect a commanded AprilTag and head toward it without operator piloting."
+    type: functional
+    rationale: "Realises the primary MOE (autonomous tag homing)."
+    parent: MOE-01
+    allocated_to: [C-CTRL, C-APRIL]
+    verification: D
+    status: draft
+  - id: SYS-002
+    text: "The system shall reduce range to the commanded tag at a measurable nonzero rate under nominal conditions."
+    type: performance
+    rationale: "Quantifies homing effectiveness (MOP-01)."
+    parent: MOP-01
+    allocated_to: [C-CTRL, C-FIN]
+    verification: T
+    status: draft
+  - id: SYS-003
+    text: "The system shall operate submerged to a maximum depth of 0.75 m."
+    type: environmental
+    rationale: "Test environment limit (Round 1 SoI)."
+    parent: STK-EXP-03
+    allocated_to: [C-ENCL]
+    verification: T
+    status: draft
+  - id: SYS-004
+    text: "The system shall remain watertight with zero ingress for the mission duration at <= 0.75 m."
+    type: functional
+    rationale: "Protect electronics; facility safety."
+    parent: STK-EXP-03
+    allocated_to: [C-ENCL]
+    verification: T
+    status: draft
+  - id: SYS-005
+    text: "The system shall accept missions and report status through the operator console."
+    type: interface
+    rationale: "Operator tasking is in the SoI boundary."
+    parent: STK-EXP-01
+    allocated_to: [C-CRAB, C-OPC]
+    verification: D
+    status: draft
+  - id: SYS-006
+    text: "The system shall be safe to retrieve by hand from the water at any time, presenting no shock, burn, or high-energy pinch hazard."
+    type: safety
+    rationale: "Round 3: no operator e-stop; recovery is manual physical removal from a backyard pool."
+    parent: STK-EXP-02
+    allocated_to: [C-VEH, C-ENCL]
+    verification: I
+    status: draft
+  - id: SYS-009
+    text: "The system shall autonomously search (sweep) for the commanded tag when it is not initially within the camera field of view."
+    type: functional
+    rationale: "Round 3: tag is not guaranteed in initial FOV; exercises the SCANNING state."
+    parent: MOE-01
+    allocated_to: [C-CTRL]
+    verification: D
+    status: draft
+  - id: SYS-010
+    text: "On no measurable progress toward the commanded tag, the system shall auto-retry up to a configured limit and then escalate to the operator."
+    type: functional
+    rationale: "Round 3: fail-safe for blocked/unreachable tags (controller STUCK + crab escalation)."
+    parent: STK-EXP-01
+    allocated_to: [C-CRAB, C-CTRL]
+    verification: D
+    status: draft
+  - id: SYS-011
+    text: "The system shall accept a FIFO queue of tag missions and support priority missions that preempt or reorder the running mission, with a configurable wait timeout before preemption."
+    type: interface
+    rationale: "Round 3: queued tasking with override/preemption and bounded wait (crab dispatcher)."
+    parent: STK-EXP-01
+    allocated_to: [C-CRAB, C-OPC]
+    verification: D
+    status: draft
+  - id: SYS-007
+    text: "The system shall reliably detect a 200 mm tag36h11 AprilTag at ranges >= 1.5 m under nominal lighting."
+    type: performance
+    rationale: "Perception envelope needed to acquire the tag before homing (Round 2: MOP-02)."
+    parent: MOP-02
+    allocated_to: [C-APRIL, C-CAM]
+    verification: T
+    status: draft
+  - id: SYS-008
+    text: "The system shall declare a homing mission ACHIEVED when range to the commanded tag is <= 0.30 m and bearing is aligned."
+    type: functional
+    rationale: "Defines mission completion / final standoff (Round 2: MOP-03)."
+    parent: MOP-03
+    allocated_to: [C-CTRL]
+    verification: D
+    status: draft
+  - id: SYS-012
+    text: "The system shall be slightly negatively buoyant, resting on the pool floor when unpowered, and shall be retrievable by hand or pole from <= 0.75 m."
+    type: mechanical
+    rationale: "Round 4: negative-buoyancy concept; defines safe recovery from the floor."
+    parent: STK-EXP-02
+    allocated_to: [C-VEH, C-HULL]
+    verification: T
+    status: draft
+  - id: SYS-013
+    text: "The system shall sustain at least 30 minutes of continuous autonomous operation per deployment."
+    type: performance
+    rationale: "Round 4: endurance target for a demonstration session."
+    parent: STK-EXP-01
+    allocated_to: [C-POWER, C-COMPUTE]
+    verification: T
+    status: draft
+  - id: SYS-014
+    text: "The system shall navigate to a defined home position (pool centre) using AprilTag bearing and range within the known, measured pool."
+    type: functional
+    rationale: "Round 4: return-to-home capability; tags provide cardinal bearing + range in a known space."
+    parent: STK-EXP-01
+    allocated_to: [C-CTRL, C-APRIL]
+    verification: D
+    status: draft
+  - id: SYS-015
+    text: "The system shall not actuate any propulsor during a configurable startup settling period (default 10 s) after power-on."
+    type: safety
+    rationale: "Round 6: vehicle is hand-placed; no motion while hands are near during deployment."
+    parent: STK-EXP-02
+    allocated_to: [C-CTRL]
+    verification: T
+    status: draft
+  # ---- Software-safety control requirements (Round 7, NASA-GB-8719.13) ----
+  - id: SYS-016
+    text: "On loss of a sensor input or an internal fault, the system shall transition to a stable hover (HOVERING) rather than continue an uncommanded manoeuvre."
+    type: safety
+    rationale: "Round 7: fail-safe state is a stable hover; negatively-buoyant hull settles on total power loss."
+    parent: STK-EXP-02
+    allocated_to: [C-CTRL]
+    verification: D
+    status: draft
+  - id: SYS-017
+    text: "The system shall clamp every propulsor command to its configured mechanical limits before output."
+    type: safety
+    rationale: "Round 7: prevents the worst credible software mishap (hardware self-damage from out-of-limit commands)."
+    parent: STK-EXP-02
+    allocated_to: [C-CTRL]
+    verification: T
+    safety_critical: true
+    status: draft
+  - id: SYS-018
+    text: "The system shall reject malformed mission, configuration, or detection messages without crashing and without commanding the propulsors."
+    type: safety
+    rationale: "Round 7: bad input must not produce undefined actuator commands."
+    parent: STK-EXP-02
+    allocated_to: [C-CRAB, C-CTRL]
+    verification: T
+    safety_critical: true
+    status: draft
+  - id: SYS-019
+    text: "The system shall ignore target detections older than a configured age and shall not act on stale perception data."
+    type: safety
+    rationale: "Round 7: acting on stale detections can drive erratic motion into pool walls/hardware."
+    parent: STK-EXP-02
+    allocated_to: [C-CTRL]
+    verification: T
+    status: draft
+  - id: SYS-020
+    text: "The system shall command the propulsors only after receiving the latched robot configuration (correct actuator mapping)."
+    type: safety
+    rationale: "Round 7: actuating before config could drive the wrong joint and damage hardware."
+    parent: STK-EXP-02
+    allocated_to: [C-CTRL, C-CRAB]
+    verification: T
+    safety_critical: true
+    status: draft
+  # ---- Mechanical (Round 8) ----
+  - id: MEC-001
+    text: "The vehicle dry mass shall be 1-3 kg (recorded by weigh-in) to meet the buoyancy/ballast budget."
+    type: mechanical
+    rationale: "Round 8: drives buoyancy (SYS-012) and hand-handling."
+    parent: SYS-012
+    allocated_to: [C-VEH]
+    verification: I
+    status: draft
+  - id: MEC-002
+    text: "The fins shall be Garolite reinforced with a carbon-fiber rod, with interchangeable surfaces (Icarex+PVA aerial / nylon+steel underwater)."
+    type: mechanical
+    rationale: "Soft flapping-foil propulsion concept."
+    parent: SYS-002
+    allocated_to: [C-FIN]
+    verification: I
+    status: draft
+  - id: MEC-003
+    text: "The aluminum enclosure shall be sealed watertight with silicone at the lid/seams and cord grips at every cable penetration (strain-relieved)."
+    type: mechanical
+    rationale: "Round 8: confirmed sealing method; defines the leak-test focus for SYS-004."
+    parent: SYS-004
+    allocated_to: [C-ENCL]
+    verification: I
+    status: draft
+  # ---- Electrical (Round 8) ----
+  - id: ELE-001
+    text: "The vehicle shall be powered by a 3S LiPo (~2200 mAh) supplying separate servo and compute rails."
+    type: electrical
+    rationale: "Round 8: energy source; 30 min endurance (SYS-013) requires mean draw <= ~4.4 A."
+    parent: SYS-013
+    allocated_to: [C-POWER]
+    verification: I
+    status: draft
+  - id: ELE-002
+    text: "Battery voltage shall not be driven below the LiPo safe cutoff (~9.0 V / 3.0 V per cell); operation below shall trigger a warning or safe shutdown."
+    type: electrical
+    rationale: "Round 8: LiPo protection; power loss -> negatively-buoyant settle is the backstop."
+    parent: SYS-016
+    allocated_to: [C-POWER]
+    verification: T
+    status: draft
+  - id: ELE-003
+    text: "Each servo's current limit shall be configured (factory default) and the peak per-servo current recorded and within safe thermal range."
+    type: electrical
+    rationale: "Round 8: overcurrent control for the hardware-self-damage hazard (SWH-01)."
+    parent: SYS-017
+    allocated_to: [C-SERVO]
+    verification: T
+    status: draft
+  - id: ELE-004
+    text: "All wiring shall show end-to-end continuity < 1 ohm, no unintended shorts, and intact insulation with no exposed conductors reachable when wet."
+    type: electrical
+    rationale: "Round 8: electrical integrity for safe hand recovery (SYS-006)."
+    parent: SYS-006
+    allocated_to: [C-POWER]
+    verification: T
+    status: draft
+  - id: ELE-005
+    text: "All four servos shall enumerate and respond on the RS-485 bus (Dynamixel Protocol 2.0)."
+    type: electrical
+    rationale: "Round 8: actuation bus integrity underpins all motion."
+    parent: SYS-001
+    allocated_to: [C-SERVO, C-COMPUTE]
+    verification: T
+    status: draft
+# TODO(Round 9+): EMC, structural durability, full mass/power budget analysis.

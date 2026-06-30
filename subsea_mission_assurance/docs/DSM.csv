@@ -1,0 +1,12 @@
+Row_depends_on->,APRIL,CAM,CAMIF,COMPUTE,CRAB,CTRL,DXLIF,IMU,IMUIF,OPC,SERVO
+APRIL,—,,X,,,,,,,,
+CAM,,—,,,,,,,,,
+CAMIF,,,—,,,,,,,,
+COMPUTE,,X,,—,,,,,,,
+CRAB,,,,,—,X,,,,X,
+CTRL,X,,,,X,—,X,,X,,
+DXLIF,,,,,,X,—,,,,
+IMU,,,,X,,,,—,,,
+IMUIF,,,,,,,,,—,,
+OPC,,,,,,X,,,,—,
+SERVO,,,,X,,,,,,,—

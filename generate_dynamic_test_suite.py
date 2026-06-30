@@ -1,75 +1,53 @@
+#!/usr/bin/env python3
+"""
+generate_dynamic_test_suite.py - Rapid Mission Hot-Swap Generator
+=================================================================
+Emits run_dynamic_test.sh: rapid, back-to-back mission changes with no settling
+in between, stressing the dispatcher's queueing and override (preemption) paths.
+Same soul as before (a fast hot-swap stress script), now mission-based.
+
+  PART 1: a quick FIFO burst — many missions queued in rapid succession.
+  PART 2: override storms — discard/requeue preemptions fired mid-mission.
+"""
+
 import os
-import numpy as np
 
-# --- Configuration ---
-motions = [
-    "forward_flap", "backward_flap", "up_flap", 
-    "down_flap", "forward_paddle", "backward_paddle"
-]
+tags = [3, 7, 5, 9, 2, 11]
+labels = ["NORTH", "DOCK", "HOME", "URGENT", "DETOUR", "WEST"]
 
-# Parameters for the linear sweep (5 steps)
-# Testing range: Frequency 0.5Hz to 2.5Hz, Amplitude 0.3 to 1.5
-freq_steps = np.linspace(0.5, 2.5, 5)
-amp_steps = np.linspace(0.3, 1.5, 5)
-cycles = 4.0
-
+TOPIC = "/mission_input"
 output_file = "run_dynamic_test.sh"
+
+
+def pub(line, delay):
+    return (f'ros2 topic pub -1 {TOPIC} std_msgs/msg/String '
+            f'"{{data: \\"{line}\\"}}" --once\nsleep {delay}\n')
+
 
 def generate_sh_script():
     with open(output_file, "w") as f:
         f.write("#!/bin/bash\n\n")
-        f.write("# --- Dynamic Testing: Linear Sweeps & Mixed Transitions ---\n")
-        f.write("# No calibration in between. 4 cycles per motion.\n\n")
+        f.write("# --- Dynamic Testing: Rapid Mission Hot-Swaps & Overrides ---\n")
+        f.write("# Launch the stack first: ros2 launch soft_propulsors_control crab_launch.py\n\n")
 
-        cmd_id = 1000 # Starting ID for this test set
+        # --- PART 1: rapid FIFO burst -----------------------------------
+        f.write("# PART 1: Rapid FIFO burst (missions queued ~1 s apart)\n")
+        for tag, label in zip(tags, labels):
+            f.write(pub(f"tag:{tag} label:{label} retries:1 override:none", 1))
+        f.write("\n")
 
-        # --- PART 1: Linear Sweep (30 Commands) ---
-        # 6 motions * 5 steps = 30 commands
-        f.write("# PART 1: Linear Sweeps per Motion\n")
-        for m in motions:
-            f.write(f"# Sweep for {m}\n")
-            for i in range(5):
-                freq = round(freq_steps[i], 2)
-                amp = round(amp_steps[i], 2)
-                
-                motion_str = (
-                    f"actuators:[left,right] motions:[{m},{m}] modes:[3.0,3.0] "
-                    f"freqs:[{freq},{freq}] amps:[{amp},{amp}] cycles:[{cycles},{cycles}] "
-                    f"cmd_id:[{cmd_id}]"
-                )
-                
-                f.write(f'ros2 topic pub -1 /motion_cmd std_msgs/msg/String "{{data: \\"{motion_str}\\"}}" --once\n')
-                
-                # Sleep exactly for the motion duration to hot-swap
-                duration = cycles / freq
-                f.write(f"sleep {duration}\n")
-                cmd_id += 1
-            f.write("\n")
-
-        # --- PART 2: Mixed Transitions (6 Commands) ---
-        # Each command contains a sequence of all 6 motions back-to-back
-        f.write("# PART 2: Mixed Motion Transitions (6 repeats)\n")
-        mix_freq = 1.2
-        mix_amp = 1.0
-        
-        for repeat in range(6):
-            f.write(f"# Mixed Set {repeat + 1}\n")
-            for m in motions:
-                motion_str = (
-                    f"actuators:[left,right] motions:[{m},{m}] modes:[3.0,3.0] "
-                    f"freqs:[{mix_freq},{mix_freq}] amps:[{mix_amp},{mix_amp}] "
-                    f"cycles:[{cycles},{cycles}] cmd_id:[{cmd_id}]"
-                )
-                
-                f.write(f'ros2 topic pub -1 /motion_cmd std_msgs/msg/String "{{data: \\"{motion_str}\\"}}" --once\n')
-                
-                duration = cycles / mix_freq
-                f.write(f"sleep {duration}\n")
-                cmd_id += 1
+        # --- PART 2: override storms ------------------------------------
+        f.write("# PART 2: Override storm (discard / requeue mid-mission)\n")
+        for repeat in range(3):
+            f.write(f"# Override set {repeat + 1}\n")
+            f.write(pub(f"tag:{tags[0]} label:BASE_{repeat} retries:2 override:none", 2))
+            f.write(pub(f"tag:{tags[1]} label:CUT_{repeat} retries:1 override:discard", 1))
+            f.write(pub(f"tag:{tags[2]} label:SAVE_{repeat} retries:1 override:requeue", 2))
             f.write("\n")
 
     os.chmod(output_file, 0o755)
-    print(f"Generated {output_file} with 36 total commands.")
+    print(f"Generated {output_file} (rapid mission hot-swaps + overrides).")
+
 
 if __name__ == "__main__":
     generate_sh_script()

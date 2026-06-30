@@ -6,9 +6,10 @@ from rosidl_runtime_py.convert import message_to_ordereddict
 
 # --- CONFIGURATION ---
 TOPIC_MAPS = {
-    'joint_feedback': ['id', 'mode', 'pos_rad', 'vel_rads', 'curr_amps', 'volt_v'],
-    'joint_cmd':      ['id', 'mode', 'goal'],
-    'telemetry':      ['goal_rad', 'fb_pos_rad', 'fb_vel_rads', 'fb_curr_amps', 'fb_volt_v']
+    'joint_feedback':      ['id', 'mode', 'pos_rad', 'vel_rads', 'curr_amps', 'volt_v'],
+    'joint_cmd':           ['id', 'mode', 'goal'],
+    'telemetry':           ['goal_rad', 'fb_pos_rad', 'fb_vel_rads', 'fb_curr_amps', 'fb_volt_v'],
+    'apriltag_detections': ['tag_id', 'dist_m', 'bearing_rad', 'elev_rad', 'valid']
 }
 
 def format_time(rel_nanosec):

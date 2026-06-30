@@ -1,0 +1,19 @@
+IRD_ID,Interface,Category,Requirement,Value,TBC,Verification,Status
+IRD-01,IF-JCMD,timing,The controller shall publish a complete joint-position command vector at the configured control rate (default 400 Hz).,400 Hz [TBC] (controller _control_loop timer),yes,VER-017,draft
+IRD-02,IF-JCMD,data,"The joint_cmd payload shall be a Float32 vector of joint positions in radians, ordered by the latched actuator map, one element per active joint.",Float32MultiArray; rad; actuator-map order,no,VER-020,draft
+IRD-03,IF-JCMD,error,Every joint_cmd element shall be clamped to the joint's configured mechanical min/max before it is published.,"clamp to [min,max] per joint",no,VER-017,draft
+IRD-04,IF-JCMD,ordering,No joint_cmd shall be published before the latched robot_config has been received.,config-before-actuation gate,no,VER-020,draft
+IRD-05,IF-JFB,timing,"The Dynamixel interface shall publish joint_feedback at the hardware loop rate (default 500 Hz), latest-sample-only.","500 Hz [TBC], QoS depth=1 (Dynamixel hardware loop)",yes,,draft
+IRD-06,IF-JFB,error,The controller shall tolerate missing or late joint_feedback frames without commanding an uncommanded manoeuvre.,graceful-degradation,no,VER-016,draft
+IRD-07,IF-IMG,timing,The camera interface shall republish frames at no more than the configured cap (default 15 Hz).,<= 15 Hz [TBC] (stellarhd publish_rate cap),yes,,draft
+IRD-08,IF-TAG,timing,AprilTag detections shall be produced at the detector rate (default 30 Hz) and carry a timestamp.,30 Hz [TBC] + per-message stamp (apriltag detect_rate),yes,,draft
+IRD-09,IF-TAG,error,The controller shall ignore detections older than the configured staleness threshold (default 0.5 s).,0.5 s [TBC] stale-reject window (controller stale check),yes,VER-019,draft
+IRD-10,IF-IMU,timing,The IMU interface shall publish imu_data at the configured sample rate (default 100 Hz) as sensor_msgs/Imu.,100 Hz [TBC] (icm20948 sample_rate),yes,,draft
+IRD-11,IF-CFG,ordering,"robot_config shall be published once on a latched (transient-local, depth 1) topic so any node that starts later still receives the configuration.","QoS TRANSIENT_LOCAL, depth=1 (latched)",no,VER-020,draft
+IRD-12,IF-MISSTAT,timing,mission_status shall be published on each state change and rate-limited to a minimum spacing (default 5 Hz).,<= 5 Hz [TBC] (controller STATUS_PERIOD 0.2 s),yes,VER-005,draft
+IRD-13,IF-MISIN,error,Malformed mission_input messages shall be rejected without crashing the dispatcher and without commanding the propulsors.,reject-and-continue,no,VER-018,draft
+IRD-14,IF-RS485,protocol,"The servo bus shall run Dynamixel Protocol 2.0 over RS-485 at 1 Mbaud via the U2D2 adapter, addressing four servos.","RS-485, 1,000,000 baud, Protocol 2.0, 4 IDs",no,VER-E05,draft
+IRD-15,IF-I2C,protocol,The IMU shall be addressed on I2C at 0x69.,I2C addr 0x69,no,,draft
+IRD-16,IF-MISCMD,ordering,mission_cmd shall carry exactly one active mission and the controller shall act only on the most recent message.,single active mission; latest-wins,no,VER-011,draft
+IRD-17,IF-TLM,data,telemetry shall be a Float32 vector for monitoring only; its loss shall not affect vehicle control.,"Float32MultiArray; non-safety, lossy-tolerant",no,,draft
+IRD-18,IF-USB,protocol,The camera shall stream over USB UVC and the camera interface shall recover the stream on disconnect without crashing.,USB UVC; reconnect-on-loss,no,VER-016,draft

@@ -1,0 +1,7 @@
+SWH,Software_Cause,System_Hazard,Severity,Likelihood,Controls,Verification
+SWH-01,Propulsor command exceeds the joint's mechanical limit.,Hardware self-damage (servo stall / structural overtravel).,Marginal,Occasional,SYS-017,VER-017
+SWH-02,Propulsor actuation during hand placement/recovery.,"Operator finger pinch from a moving fin (low energy, soft fins).",Negligible,Remote,SYS-015,VER-015
+SWH-03,Controller acts on stale or false target detections.,Erratic homing drives the vehicle into a pool wall / stresses hardware.,Marginal,Occasional,SYS-019; SYS-001,VER-019; VER-001
+SWH-04,Loss of a sensor input or an internal fault mid-run.,Uncommanded / erratic manoeuvre.,Marginal,Occasional,SYS-016,VER-016
+SWH-05,Malformed mission/config/detection message.,Node crash or undefined actuator command.,Marginal,Remote,SYS-018,VER-018
+SWH-06,Actuation before the latched configuration is received (wrong actuator map).,Wrong-joint runaway -> hardware self-damage.,Marginal,Remote,SYS-020,VER-020

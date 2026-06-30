@@ -1,0 +1,24 @@
+# =====================================================================
+# stakeholders.yaml — Stakeholder Expectations (NASA SE process 1).
+# SEED ONLY — to be populated/confirmed in Interview Round 2.
+# Each expectation gets an ID; requirements trace to these via `parent`.
+# =====================================================================
+stakeholders:
+  - {id: STK-PI,  name: "Principal investigator / student researcher"}
+  - {id: STK-LAB, name: "Lab / facility owner"}
+  - {id: STK-SAF, name: "Safety observer"}
+
+expectations:
+  - id: STK-EXP-01
+    stakeholder: STK-PI
+    text: "Demonstrate autonomous homing to an AprilTag using soft flapping propulsion."
+    status: draft
+  - id: STK-EXP-02
+    stakeholder: STK-SAF
+    text: "Operate without shock, thermal, or entanglement hazard to people."
+    status: draft
+  - id: STK-EXP-03
+    stakeholder: STK-LAB
+    text: "Cause no water damage to the facility; remain watertight and recoverable."
+    status: draft
+# TODO(Round 2): confirm stakeholder list, success criteria, and constraints.

@@ -1,0 +1,64 @@
+# =====================================================================
+# software_safety.yaml — Software Safety Analysis (NASA-GB-8719.13, full).
+# The control path (controller -> propulsors) autonomously commands
+# potentially hazardous actuators with no independent operator inhibit,
+# so it is SAFETY-CRITICAL. Round 7: fail-safe state = stable HOVERING;
+# worst credible software mishap = hardware self-damage.
+# =====================================================================
+software_safety:
+  determination:
+    safety_critical: true
+    control_category: >
+      Autonomous (highest). The control software has sole autonomous control of
+      the propulsors; there is no independent hardware/operator inhibit (no
+      e-stop). Per NASA-GB-8719.13 this is the most safety-significant control
+      category and warrants full analysis.
+    worst_credible_mishap: "Hardware self-damage (servo/structure) from an out-of-limit or runaway command."
+    severity: "Marginal (hardware damage; soft compliant fins keep human-injury energy low)."
+    fail_safe_state: "Stable HOVERING; on total power/compute loss the negatively-buoyant hull settles to the floor."
+    rigor: "Full analysis (Round 7) tailored to a research prototype: hazard causes, controls, and verification traced; no independent IV&V."
+
+  # Software hazard causes -> system hazard -> control requirement(s) -> verification
+  hazards:
+    - id: SWH-01
+      cause: "Propulsor command exceeds the joint's mechanical limit."
+      hazard: "Hardware self-damage (servo stall / structural overtravel)."
+      severity: Marginal
+      likelihood: Occasional
+      controls: [SYS-017]
+      verification: [VER-017]
+    - id: SWH-02
+      cause: "Propulsor actuation during hand placement/recovery."
+      hazard: "Operator finger pinch from a moving fin (low energy, soft fins)."
+      severity: Negligible
+      likelihood: Remote
+      controls: [SYS-015]
+      verification: [VER-015]
+    - id: SWH-03
+      cause: "Controller acts on stale or false target detections."
+      hazard: "Erratic homing drives the vehicle into a pool wall / stresses hardware."
+      severity: Marginal
+      likelihood: Occasional
+      controls: [SYS-019, SYS-001]
+      verification: [VER-019, VER-001]
+    - id: SWH-04
+      cause: "Loss of a sensor input or an internal fault mid-run."
+      hazard: "Uncommanded / erratic manoeuvre."
+      severity: Marginal
+      likelihood: Occasional
+      controls: [SYS-016]
+      verification: [VER-016]
+    - id: SWH-05
+      cause: "Malformed mission/config/detection message."
+      hazard: "Node crash or undefined actuator command."
+      severity: Marginal
+      likelihood: Remote
+      controls: [SYS-018]
+      verification: [VER-018]
+    - id: SWH-06
+      cause: "Actuation before the latched configuration is received (wrong actuator map)."
+      hazard: "Wrong-joint runaway -> hardware self-damage."
+      severity: Marginal
+      likelihood: Remote
+      controls: [SYS-020]
+      verification: [VER-020]

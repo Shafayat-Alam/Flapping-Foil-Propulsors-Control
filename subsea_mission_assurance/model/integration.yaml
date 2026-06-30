@@ -1,0 +1,76 @@
+# =====================================================================
+# integration.yaml — Integration & Verification plan (NASA SE Handbook
+# Product Integration process). Strategy chosen this round:
+#   INCREMENTAL, BOTTOM-UP, with DRY -> WET stage gates.
+#
+# The DSM (Design Structure Matrix) is COMPUTED from the interface coupling
+# in architecture.yaml by generate.py: it renders the component x component
+# matrix, finds feedback loops (strongly-connected clusters that must be
+# brought up together), and derives a suggested integration order. The
+# hand-authored stages below are checked against that order.
+# =====================================================================
+
+integration:
+  strategy: "Incremental, bottom-up, with dry -> wet stage gates."
+  rationale: >
+    Water ingress (R-LEAK) is the top risk, so water exposure is deferred until
+    a full DRY integration gate passes. Each interface is brought up and observed
+    in isolation before loops are closed, giving clean fault isolation per added
+    interface. Immersion then proceeds unpowered -> powered-shallow -> full-depth.
+  method: "DSM-sequenced. Coupled clusters (control feedback loops) are integrated as a block, not piecewise."
+
+  stages:
+    - id: INT-0
+      name: "Bench / dry component bring-up"
+      goal: "Each sensor/actuator interface alive and observable in isolation — no closed loop, no water."
+      components: [C-COMPUTE, C-SERVO, C-IMU, C-CAM, C-CAMIF, C-IMUIF, C-APRIL, C-DXLIF, C-POWER]
+      interfaces: [IF-RS485, IF-I2C, IF-USB, IF-IMG, IF-TAG, IF-IMU, IF-JFB]
+      entry: "Components mounted on the bench; flight LiPo charged; no water."
+      exit_gate: "All 4 servos enumerate on RS-485; IMU streams at rate; camera -> apriltag detects a tag on the bench at >= 1.5 m."
+      verification: [VER-E05, VER-E01, VER-E03, VER-007, VER-010]
+      risks: [R-PERC]
+      wet: false
+
+    - id: INT-1
+      name: "Dry closed-loop integration"
+      goal: "Close the control loop in air/sim — mission plane + actuation + perception together, propulsors free to move but out of water."
+      components: [C-CRAB, C-CTRL, C-MOTION, C-OPC]
+      interfaces: [IF-MISIN, IF-MISCMD, IF-MISSTAT, IF-CFG, IF-JCMD, IF-TLM]
+      entry: "INT-0 passed; controller + crab launched; robot_config latched."
+      exit_gate: "Config-before-actuation, startup-settle, command clamp, stale-reject, and fault->HOVERING all demonstrated dry; no actuation before config."
+      verification: [VER-015, VER-016, VER-017, VER-018, VER-019, VER-020, VER-005, VER-011]
+      risks: [R-CTRL]
+      wet: false
+
+    - id: INT-2
+      name: "Unpowered immersion (leak gate)"
+      goal: "Prove watertightness before any powered in-water run."
+      components: [C-ENCL, C-HULL, C-VEH]
+      interfaces: []
+      entry: "INT-1 passed; enclosure sealed (silicone + cord grips); interior witness placed."
+      exit_gate: "Submerged to 0.75 m for >= mission duration with zero dye/water on the interior witness; buoyancy slightly negative and hand/pole recoverable."
+      verification: [VER-004, VER-M03, VER-003, VER-012]
+      risks: [R-LEAK, R-BUOY]
+      wet: true
+
+    - id: INT-3
+      name: "Powered shallow trial (tethered)"
+      goal: "First powered, in-water, closed-loop run at shallow depth with a short tether for abort/recovery."
+      components: [C-FIN, C-VEH]
+      interfaces: [IF-JCMD, IF-JFB, IF-TAG, IF-IMU]
+      entry: "INT-2 leak gate passed; gentle gait gains loaded; tether attached."
+      exit_gate: "Stable closed-loop swimming; measurable closure toward a tag (MOP-01); no oscillation/runaway; safe surface temperature and recovery."
+      verification: [VER-002, VER-006b, VER-014]
+      risks: [R-PROP, R-GEOM, R-CTRL]
+      wet: true
+
+    - id: INT-4
+      name: "Full autonomous mission (validation)"
+      goal: "End-to-end untethered autonomous mission at full test depth — the system validation runs."
+      components: [C-VEH]
+      interfaces: [IF-MISIN, IF-MISSTAT, IF-TAG, IF-JCMD]
+      entry: "INT-3 passed; gait tuned; endurance pack charged."
+      exit_gate: "Autonomous SCANNING->LOCKING->HEADING->ACHIEVED, return-to-home, and the 30-run acquisition campaign (MOP-02) at >= 0.90; >= 30 min endurance."
+      verification: [VER-001, VER-008, VER-009, VER-013]
+      risks: [R-PROP, R-PERC]
+      wet: true

@@ -1,0 +1,14 @@
+ID,Name,Kind,Type,Producer,Consumer
+IF-MISIN,mission_input,ros_topic,std_msgs/String,C-OPC,C-CRAB
+IF-MISCMD,mission_cmd,ros_topic,std_msgs/String,C-CRAB,C-CTRL
+IF-MISSTAT,mission_status,ros_topic,std_msgs/String,C-CTRL,C-CRAB
+IF-CFG,robot_config,ros_topic,std_msgs/String (latched),C-CRAB,C-CTRL
+IF-JCMD,joint_cmd,ros_topic,std_msgs/Float32MultiArray,C-CTRL,C-DXLIF
+IF-JFB,joint_feedback,ros_topic,std_msgs/Float32MultiArray,C-DXLIF,C-CTRL
+IF-IMU,imu_data,ros_topic,sensor_msgs/Imu,C-IMUIF,C-CTRL
+IF-TAG,apriltag_detections,ros_topic,std_msgs/Float32MultiArray,C-APRIL,C-CTRL
+IF-IMG,camera/image_raw,ros_topic,sensor_msgs/Image,C-CAMIF,C-APRIL
+IF-TLM,telemetry,ros_topic,std_msgs/Float32MultiArray,C-CTRL,C-OPC
+IF-RS485,servo bus (RS-485),physical,RS-485 / U2D2 1 Mbaud,C-COMPUTE,C-SERVO
+IF-I2C,IMU bus (I2C),physical,I2C 0x69,C-COMPUTE,C-IMU
+IF-USB,camera (USB),physical,USB UVC,C-CAM,C-COMPUTE

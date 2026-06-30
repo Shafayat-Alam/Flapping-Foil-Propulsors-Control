@@ -7,6 +7,7 @@ Usage: python3 record_session.py <session_name>
 import sys
 import os
 import subprocess
+import json
 from pathlib import Path
 from datetime import datetime
 import csv
@@ -114,8 +115,10 @@ def extract_bag_to_csv(bag_path, csv_dir):
     
     # Organize messages by topic
     topic_data = {
-        '/robot_cmd': [],
-        '/motion_cmd': [],
+        '/mission_input': [],
+        '/mission_cmd': [],
+        '/mission_status': [],
+        '/apriltag_detections': [],
         '/joint_cmd': [],
         '/joint_feedback': [],
         '/telemetry': []
@@ -156,32 +159,74 @@ def extract_bag_to_csv(bag_path, csv_dir):
     # Write CSVs
     print("Writing CSV files...")
     
-    # robot_cmd CSV
-    if topic_data['/robot_cmd']:
-        with open(csv_dir / 'robot_cmd.csv', 'w', newline='') as f:
+    # mission_input CSV (raw mission lines fed from the terminal/bash)
+    if topic_data['/mission_input']:
+        with open(csv_dir / 'mission_input.csv', 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['timestamp_human', 'timestamp_ms', 'command'])
-            for entry in topic_data['/robot_cmd']:
+            writer.writerow(['timestamp_human', 'timestamp_ms', 'mission'])
+            for entry in topic_data['/mission_input']:
                 writer.writerow([
                     entry['timestamp_human'],
                     entry['timestamp_ms'],
                     entry['msg'].data
                 ])
-    
-    # motion_cmd CSV
-    if topic_data['/motion_cmd']:
-        with open(csv_dir / 'motion_cmd.csv', 'w', newline='') as f:
+
+    # mission_cmd CSV (mission goals dispatched to the controller)
+    if topic_data['/mission_cmd']:
+        with open(csv_dir / 'mission_cmd.csv', 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['timestamp_human', 'timestamp_ms', 'cmd_id', 'data'])
-            for entry in topic_data['/motion_cmd']:
-                data = entry['msg'].data
-                cmd_id = data[0] if len(data) > 0 else 0.0
+            writer.writerow(['timestamp_human', 'timestamp_ms', 'label', 'target_tag_id', 'max_retries'])
+            for entry in topic_data['/mission_cmd']:
+                try:
+                    m = json.loads(entry['msg'].data)
+                except (json.JSONDecodeError, TypeError):
+                    m = {}
                 writer.writerow([
                     entry['timestamp_human'],
                     entry['timestamp_ms'],
-                    cmd_id,
-                    ','.join(map(str, data))
+                    m.get('label', ''),
+                    m.get('target_tag_id', ''),
+                    m.get('max_retries', ''),
                 ])
+
+    # mission_status CSV (interpreted status/events back from the controller)
+    if topic_data['/mission_status']:
+        with open(csv_dir / 'mission_status.csv', 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['timestamp_human', 'timestamp_ms', 'label', 'state',
+                             'progress', 'roll', 'pitch', 'yaw', 'event'])
+            for entry in topic_data['/mission_status']:
+                try:
+                    s = json.loads(entry['msg'].data)
+                except (json.JSONDecodeError, TypeError):
+                    s = {}
+                ori = s.get('orientation', [None, None, None]) or [None, None, None]
+                writer.writerow([
+                    entry['timestamp_human'],
+                    entry['timestamp_ms'],
+                    s.get('label', ''),
+                    s.get('state', ''),
+                    s.get('progress', ''),
+                    ori[0], ori[1], ori[2],
+                    s.get('event', ''),
+                ])
+
+    # apriltag_detections CSV (one row per detected tag per message)
+    if topic_data['/apriltag_detections']:
+        with open(csv_dir / 'apriltag_detections.csv', 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['timestamp_human', 'timestamp_ms', 'tag_id',
+                             'distance_m', 'bearing_rad', 'elevation_rad', 'valid'])
+            for entry in topic_data['/apriltag_detections']:
+                data = entry['msg'].data
+                # Format: [tag_id, dist, bearing, elev, valid] per tag
+                for i in range(0, len(data), 5):
+                    if i + 4 < len(data):
+                        writer.writerow([
+                            entry['timestamp_human'],
+                            entry['timestamp_ms'],
+                            data[i], data[i+1], data[i+2], data[i+3], data[i+4]
+                        ])
     
     # joint_cmd CSV
     if topic_data['/joint_cmd']:
@@ -220,20 +265,20 @@ def extract_bag_to_csv(bag_path, csv_dir):
     if topic_data['/telemetry']:
         with open(csv_dir / 'telemetry.csv', 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['timestamp_human', 'timestamp_ms', 'cmd_id', 'sample', 'goal', 'pos_rad', 'vel_rad_s', 'curr_A', 'volt_V'])
+            writer.writerow(['timestamp_human', 'timestamp_ms', 'seq', 'sample', 'goal', 'pos_rad', 'vel_rad_s', 'curr_A', 'volt_V'])
             for entry in topic_data['/telemetry']:
                 data = entry['msg'].data
                 if len(data) < 2:
                     continue
-                cmd_id = data[0]
+                seq = data[0]
                 sample = data[1]
-                # Format: [cmd_id, sample, goal, pos, vel, curr, volt] per servo
+                # Format: [seq, sample, goal, pos, vel, curr, volt] per servo
                 for i in range(2, len(data), 5):
                     if i + 4 < len(data):
                         writer.writerow([
                             entry['timestamp_human'],
                             entry['timestamp_ms'],
-                            cmd_id,
+                            seq,
                             sample,
                             data[i],      # goal
                             data[i+1],    # pos_rad
@@ -256,10 +301,13 @@ def generate_plots(csv_dir, plots_dir):
     
     # Plot joint_cmd (final commands sent to servos)
     _generate_joint_cmd_plots(csv_dir, plots_dir)
-    
-    # Plot motion_cmd (commanded values from gait engine)
-    _generate_motion_cmd_plots(csv_dir, plots_dir)
-    
+
+    # Plot mission status (progress + orientation over the run)
+    _generate_mission_status_plots(csv_dir, plots_dir)
+
+    # Plot AprilTag detections (distance + bearing to target over the run)
+    _generate_apriltag_plots(csv_dir, plots_dir)
+
     print(f"Plots saved to: {plots_dir}")
 
 def _generate_telemetry_plots(csv_dir, plots_dir):
@@ -283,14 +331,14 @@ def _generate_telemetry_plots(csv_dir, plots_dir):
     print("  Creating telemetry master plots...")
     _create_telemetry_plot_set(df, master_dir, "Telemetry - Master - All Commands")
     
-    # Per-command plots
-    cmd_ids = df['cmd_id'].unique()
-    for cmd_id in cmd_ids:
-        cmd_df = df[df['cmd_id'] == cmd_id]
-        cmd_dir = plots_dir / f'cmd_{int(cmd_id)}'
-        cmd_dir.mkdir(parents=True, exist_ok=True)
-        print(f"  Creating telemetry plots for cmd_id={int(cmd_id)}...")
-        _create_telemetry_plot_set(cmd_df, cmd_dir, f"Telemetry - Command ID {int(cmd_id)}")
+    # Per-mission plots (grouped by mission sequence number)
+    seqs = df['seq'].unique()
+    for seq in seqs:
+        seq_df = df[df['seq'] == seq]
+        seq_dir = plots_dir / f'mission_{int(seq)}'
+        seq_dir.mkdir(parents=True, exist_ok=True)
+        print(f"  Creating telemetry plots for mission seq={int(seq)}...")
+        _create_telemetry_plot_set(seq_df, seq_dir, f"Telemetry - Mission {int(seq)}")
 
 def _generate_joint_feedback_plots(csv_dir, plots_dir):
     """Generate plots from joint_feedback.csv"""
@@ -333,35 +381,42 @@ def _generate_joint_cmd_plots(csv_dir, plots_dir):
     print("  Creating joint_cmd master plots...")
     _create_joint_cmd_plot(df, plots_dir / 'master', "Joint Cmd - Master - All Commands")
 
-def _generate_motion_cmd_plots(csv_dir, plots_dir):
-    """Generate plots from motion_cmd.csv"""
-    motion_file = csv_dir / 'motion_cmd.csv'
-    if not motion_file.exists():
-        print("  No motion_cmd.csv found - skipping motion_cmd plots")
+def _generate_mission_status_plots(csv_dir, plots_dir):
+    """Generate plots from mission_status.csv (progress + orientation)."""
+    status_file = csv_dir / 'mission_status.csv'
+    if not status_file.exists():
+        print("  No mission_status.csv found - skipping mission_status plots")
         return
-    
-    df = pd.read_csv(motion_file)
+
+    df = pd.read_csv(status_file)
     if df.empty:
-        print("  Motion cmd CSV is empty - skipping plots")
+        print("  Mission status CSV is empty - skipping plots")
         return
-    
-    # Normalize timestamps
+
     df['time_ms'] = df['timestamp_ms'] - df['timestamp_ms'].min()
-    
-    # Master plots
     master_dir = plots_dir / 'master'
     master_dir.mkdir(parents=True, exist_ok=True)
-    print("  Creating motion_cmd master plots...")
-    _create_motion_cmd_plot_set(df, master_dir, "Motion Cmd - Master - All Commands")
-    
-    # Per-command plots
-    cmd_ids = df['cmd_id'].unique()
-    for cmd_id in cmd_ids:
-        cmd_df = df[df['cmd_id'] == cmd_id]
-        cmd_dir = plots_dir / f'cmd_{int(cmd_id)}'
-        cmd_dir.mkdir(parents=True, exist_ok=True)
-        print(f"  Creating motion_cmd plots for cmd_id={int(cmd_id)}...")
-        _create_motion_cmd_plot_set(cmd_df, cmd_dir, f"Motion Cmd - Command ID {int(cmd_id)}")
+    print("  Creating mission_status master plots...")
+    _create_mission_status_plot_set(df, master_dir, "Mission Status - Master")
+
+
+def _generate_apriltag_plots(csv_dir, plots_dir):
+    """Generate plots from apriltag_detections.csv (distance + bearing per tag)."""
+    tag_file = csv_dir / 'apriltag_detections.csv'
+    if not tag_file.exists():
+        print("  No apriltag_detections.csv found - skipping apriltag plots")
+        return
+
+    df = pd.read_csv(tag_file)
+    if df.empty:
+        print("  AprilTag CSV is empty - skipping plots")
+        return
+
+    df['time_ms'] = df['timestamp_ms'] - df['timestamp_ms'].min()
+    master_dir = plots_dir / 'master'
+    master_dir.mkdir(parents=True, exist_ok=True)
+    print("  Creating apriltag master plots...")
+    _create_apriltag_plot_set(df, master_dir, "AprilTag Detections - Master")
 
 def _create_telemetry_plot_set(df, output_dir, title_prefix):
     """Create telemetry plots (goal + actual)"""
@@ -496,18 +551,71 @@ def _create_joint_cmd_plot(df, output_dir, title_prefix):
     plt.savefig(output_dir / 'joint_cmd_data.png', dpi=150, bbox_inches='tight')
     plt.close()
 
-def _create_motion_cmd_plot_set(df, output_dir, title_prefix):
-    """Create motion_cmd plots"""
-    
-    # Plot command count over time
+def _create_mission_status_plot_set(df, output_dir, title_prefix):
+    """Create mission_status plots (progress + orientation)."""
+
+    # Plot 1: Mission progress over time
     plt.figure(figsize=(12, 6))
-    plt.plot(df['time_ms'], df['cmd_id'], 'r-', alpha=0.8, linewidth=1.5)
+    plt.plot(df['time_ms'], df['progress'], 'b-', alpha=0.8, linewidth=1.5, label='Progress (%)')
     plt.xlabel('Time (ms)', fontsize=11)
-    plt.ylabel('Command ID', fontsize=11)
-    plt.title(f'{title_prefix} - Command IDs', fontsize=12, fontweight='bold')
+    plt.ylabel('Progress (%)', fontsize=11)
+    plt.title(f'{title_prefix} - Progress', fontsize=12, fontweight='bold')
+    plt.legend(fontsize=10)
     plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
     plt.tight_layout()
-    plt.savefig(output_dir / 'motion_cmd_ids.png', dpi=150, bbox_inches='tight')
+    plt.savefig(output_dir / 'mission_progress.png', dpi=150, bbox_inches='tight')
+    plt.close()
+
+    # Plot 2: Body orientation (roll/pitch/yaw) over time
+    plt.figure(figsize=(12, 6))
+    for col, color in (('roll', 'r'), ('pitch', 'g'), ('yaw', 'b')):
+        if col in df.columns:
+            plt.plot(df['time_ms'], df[col], color=color, alpha=0.8,
+                     linewidth=1.5, label=col)
+    plt.xlabel('Time (ms)', fontsize=11)
+    plt.ylabel('Angle (rad)', fontsize=11)
+    plt.title(f'{title_prefix} - Orientation', fontsize=12, fontweight='bold')
+    plt.legend(fontsize=10)
+    plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
+    plt.tight_layout()
+    plt.savefig(output_dir / 'mission_orientation.png', dpi=150, bbox_inches='tight')
+    plt.close()
+
+
+def _create_apriltag_plot_set(df, output_dir, title_prefix):
+    """Create AprilTag plots (distance + bearing per detected tag)."""
+
+    tag_ids = df['tag_id'].unique()
+    colors = plt.cm.tab10(np.linspace(0, 1, max(1, len(tag_ids))))
+
+    # Plot 1: Distance to each tag over time
+    plt.figure(figsize=(12, 6))
+    for idx, tid in enumerate(tag_ids):
+        tag_df = df[df['tag_id'] == tid]
+        plt.plot(tag_df['time_ms'], tag_df['distance_m'], color=colors[idx],
+                 alpha=0.8, linewidth=1.5, label=f'Tag {int(tid)}')
+    plt.xlabel('Time (ms)', fontsize=11)
+    plt.ylabel('Distance (m)', fontsize=11)
+    plt.title(f'{title_prefix} - Distance', fontsize=12, fontweight='bold')
+    plt.legend(fontsize=10)
+    plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
+    plt.tight_layout()
+    plt.savefig(output_dir / 'apriltag_distance.png', dpi=150, bbox_inches='tight')
+    plt.close()
+
+    # Plot 2: Bearing to each tag over time
+    plt.figure(figsize=(12, 6))
+    for idx, tid in enumerate(tag_ids):
+        tag_df = df[df['tag_id'] == tid]
+        plt.plot(tag_df['time_ms'], tag_df['bearing_rad'], color=colors[idx],
+                 alpha=0.8, linewidth=1.5, label=f'Tag {int(tid)}')
+    plt.xlabel('Time (ms)', fontsize=11)
+    plt.ylabel('Bearing (rad, +left)', fontsize=11)
+    plt.title(f'{title_prefix} - Bearing', fontsize=12, fontweight='bold')
+    plt.legend(fontsize=10)
+    plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
+    plt.tight_layout()
+    plt.savefig(output_dir / 'apriltag_bearing.png', dpi=150, bbox_inches='tight')
     plt.close()
 
 
@@ -528,8 +636,10 @@ def main():
     plots_dir.mkdir(exist_ok=True)
     
     topics = [
-        "/robot_cmd",
-        "/motion_cmd",
+        "/mission_input",
+        "/mission_cmd",
+        "/mission_status",
+        "/apriltag_detections",
         "/joint_cmd",
         "/joint_feedback",
         "/telemetry"

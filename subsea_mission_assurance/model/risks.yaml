@@ -1,0 +1,101 @@
+# =====================================================================
+# risks.yaml — Technical Risk Register (NASA SE risk-management process).
+# Likelihood (L) and Consequence (C) on 1-5; Score = L x C.
+# Round 9: appetite = NONE -> every risk must be mitigated to Low before
+# powered in-water operation. Top concern = water ingress; propulsion unproven.
+# =====================================================================
+risk_policy:
+  scale: "5x5. Score = Likelihood x Consequence. Bands: Low <= 4, Medium 5-11, High >= 12."
+  appetite: "NONE. All risks shall be mitigated to Low residual before any powered in-water operation."
+
+risks:
+  - id: R-LEAK
+    title: "Water ingress / leak"
+    statement: "A seal or cable penetration fails; water floods the enclosure and destroys the electronics (loss of vehicle)."
+    likelihood: 3
+    consequence: 5            # top concern (Round 9)
+    traces: [SYS-004]
+    mitigation: "Unpowered immersion + dye + interior tissue witness BEFORE any powered run; incremental immersion (unpowered -> powered shallow -> full); pre/post leak inspection every run (SC-0). (No syringe -> immersion+dye in lieu of vacuum.)"
+    trigger: "Any moisture/dye on the interior witness, or fogging."
+    verification: [VER-004, VER-M03]
+    residual_target: Low
+    owner: PI
+    status: open
+
+  - id: R-PROP
+    title: "Propulsion ineffective"
+    statement: "The soft flapping fins do not generate enough thrust to make headway / close on a tag (propulsion is unproven)."
+    likelihood: 4            # unproven (Round 9)
+    consequence: 4
+    traces: [SYS-002]
+    mitigation: "Characterise thrust on the bench / in sim; measure closure rate in an early tethered water trial; tune gait (freq/amp/waveform) before committing to full homing runs."
+    trigger: "Mean closure rate ~0 in the first water trial (MOP-01)."
+    verification: [VER-002]
+    residual_target: Low
+    owner: PI
+    status: open
+
+  - id: R-PERC
+    title: "Perception range in pool"
+    statement: "The 200 mm tag is not reliably detected at >= 1.5 m in real pool water/lighting, so homing cannot acquire."
+    likelihood: 3
+    consequence: 4
+    traces: [SYS-007]
+    mitigation: "Bench/poolside detection-range test before relying on it; control lighting; upsize tag or tune intrinsics if margin is thin."
+    trigger: "Reliable detection range < 1.5 m in the pool."
+    verification: [VER-007]
+    residual_target: Low
+    owner: PI
+    status: open
+
+  - id: R-GEOM
+    title: "Fin geometry asymmetry"
+    statement: "Left/right fin geometry asymmetry (the known CAD left-fin joint offsets) produces asymmetric thrust / biased homing."
+    likelihood: 3
+    consequence: 3
+    traces: [SYS-002]
+    mitigation: "Verify fin symmetry on the physical build; correct joint geometry if the asymmetry is present in hardware; check thrust symmetry in trials."
+    trigger: "Vehicle consistently veers / cannot hold heading."
+    verification: [VER-002, VER-014]
+    residual_target: Low
+    owner: PI
+    status: open
+
+  - id: R-CTRL
+    title: "Control instability in water"
+    statement: "Untuned gains / loop timing cause oscillation or divergence once in water."
+    likelihood: 3
+    consequence: 3
+    traces: [SYS-016]
+    mitigation: "Incremental gain tuning from gentle gaits up; fault -> stable HOVERING (SYS-016); short tethered trials first."
+    trigger: "Sustained oscillation or runaway in a trial."
+    verification: [VER-016, VER-002]
+    residual_target: Low
+    owner: PI
+    status: open
+
+  - id: R-PWR
+    title: "Endurance shortfall"
+    statement: "2200 mAh cannot sustain the system draw for the 30-min endurance target."
+    likelihood: 3
+    consequence: 2
+    traces: [SYS-013]
+    mitigation: "Power-budget analysis + measure mean draw (multimeter in series); reduce duty cycle or upsize pack if mean draw > ~4.4 A."
+    trigger: "Measured run time < 30 min, or mean draw > 4.4 A."
+    verification: [VER-013]
+    residual_target: Low
+    owner: PI
+    status: open
+
+  - id: R-BUOY
+    title: "Buoyancy / recovery"
+    statement: "Buoyancy trim is wrong and the vehicle is uncontrollable or hard to recover (assessed Low — ballast adjustable, pool <= 0.75 m)."
+    likelihood: 2
+    consequence: 2
+    traces: [SYS-012]
+    mitigation: "Adjustable ballast; submerged-weight trim test (VER-012); confirm hand/pole recovery from the floor."
+    trigger: "Cannot trim to slightly negative, or cannot recover within reach."
+    verification: [VER-012]
+    residual_target: Low
+    owner: PI
+    status: open

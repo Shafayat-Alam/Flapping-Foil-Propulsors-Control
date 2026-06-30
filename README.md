@@ -1,115 +1,149 @@
-# Compliant Propulsors Control 
+# Soft Propulsors Control
 
-A ROS 2 Jazzy control stack for a bio-inspired blue crab robotic system with multimodal soft actuator design. The architecture follows the ROS2 Control Framework with modular decoupling between behavioral logic, motion generation, control, and hardware interfaces, enabling operation in both air and water environments.
+A ROS 2 Jazzy control stack for a bio-inspired blue crab robotic system with multimodal soft actuator design. The robot is deployed in water, autonomously seeks AprilTags, and executes a queue of navigation missions using real-time IMU and camera feedback. The architecture cleanly separates **deliberation** (what to do) from **execution** (how to do it), with thin hardware interfaces underneath.
 
 ---
 
-## ROS2 Control Framework Architecture
+## Architecture
 
 ```
-┌──────────────┐      ┌──────────────┐      ┌─────────────────┐      ┌──────────────────────┐
-│ Application  │◄────►│  Controller  │◄────►│  HW Interface   │◄────►│      Hardware        │
-│  (crab.py)   │      │(controller.py)│      │(Dynamixel...py) │      │ (Servos, IMU, Cam)   │
-└──────────────┘      └──────────────┘      └─────────────────┘      └──────────────────────┘
-       │                      │                       │                          │
-       │                      │                       │                ┌─────────┴─────────┐
-   robot_cmd             motion_cmd             joint_cmd              │         |         │
-   telemetry             telemetry           joint_feedback   Dynamixel SDK    I2C (IMU)   USB (Camera)
-                              └────────── ros2_control framework ────────┘    Adafruit      OpenCV
-                                                                              ICM20948      StellarHD
+   bash feeder
+      │ mission_input (String)
+      ▼
+┌──────────────────────┐   robot_config (latched)   ┌──────────────────────────┐
+│        crab          │ ─────────────────────────► │       controller         │
+│ Mission Dispatcher + │   mission_cmd  ──────────► │  Autonomous Execution    │
+│  Configuration Master│ ◄──────────  mission_status│   Engine (state machine) │
+└──────────────────────┘                            └──────────────────────────┘
+                                                       │ joint_cmd     ▲ joint_feedback
+                                                       │               │ imu_data
+                                                       │               │ apriltag_detections
+                                                       ▼               │
+                                          ┌─────────────────────────────────────┐
+                                          │  Hardware / Perception Interfaces   │
+                                          │  Dynamixel · ICM20948 · AprilTag    │
+                                          └─────────────────────────────────────┘
 ```
 
-*Architecture based on ROS2 Control Framework*
+**Layering**
+- **crab — deliberative layer.** Holds the robot configuration (single source of truth) and an unbounded mission queue. Dispatches one mission at a time, owns retry/human-escalation policy. Never touches sensors or servos.
+- **controller — reactive layer.** Owns every real-time sensor (servo feedback, IMU, AprilTag). Runs a state machine that drives the robot toward the active mission and reports only interpreted status upward. Generates motion directly from the `motion_command` library.
+- **hardware/perception — thin interfaces.** Publish sensor data, execute servo commands, detect tags. No mission logic.
 
-**Control Software Key Design Features:**
-- **Telemetry-Driven Architecture:** 400 Hz closed-loop control driven by hardware feedback
-- **Servo-Level Gait Control:** Motion library functions can command individual servos or synchronized groups
-- **Position Limits in Motion Wire:** Single source of truth for safety limits, passed dynamically per command
-- **Emergency Torque Disable:** SIGINT handler for instant servo torque shutdown on Ctrl+C
-- **Per-Servo Differential Motion:** Support for phase-offset, frequency ratios, and amplitude scaling between servo pairs
-- **Extensible Motion Library:** User-defined motion functions with flexible kwargs-based parameterization
+**Key Design Features**
+- **Deliberative / reactive split:** crab decides *what*, controller decides *how* — the boundary is the `mission_cmd` / `mission_status` pair.
+- **Configuration master:** crab broadcasts the actuator map, operating mode, rates, and nominal gait once on a latched topic; all nodes build their structures from it.
+- **Autonomous state machine:** `BOOT → WAIT → SCANNING → LOCKING → HEADING → STUCK → HOVERING`, driven entirely by sensor state.
+- **Mission queue with overrides:** unbounded FIFO fed from a terminal/bash script; missions can queue, `discard`-preempt, or `requeue`-preempt the running mission.
+- **Composable motion math:** `motion_command.py` is a flat library of pure functions — waveforms compose into `flap`/`paddle` gaits, with the waveform passed in as an argument.
+- **Heading missions:** crab commands a compass heading (N..NW); the controller scans for the cardinal tag(s), then swims toward the heading (currently `flap` only — differential to turn, synchronous to cruise; `paddle` and an adaptive progress-rate gait optimizer come later). Stroke is set by per-mission `velocity` (rad/s) + `effort` (rad).
 
 ---
 
 ## Table of Contents
 
 1. [Node Specifications](#node-specifications)
-   - [Application Layer (crab.py)](#application-layer-crabpy)
-   - [Controller Layer (controller.py)](#controller-layer-controllerpy)
-   - [Hardware Interface (Dynamixel_XW430_T200_interface.py)](#hardware-interface-dynamixel_xw430_t200_interfacepy)
-   - [IMU Interface (icm20948_interface.py)](#imu-interface-icm20948_interfacepy)
-   - [Camera Interface (stellarhd_interface.py)](#camera-interface-stellarhd_interfacepy)
+   - [Mission Dispatcher (crab.py)](#mission-dispatcher-crabpy)
+   - [Execution Engine (controller.py)](#execution-engine-controllerpy)
+   - [Motion Command Library (motion_command.py)](#motion-command-library-motion_commandpy)
+   - [AprilTag Perception (apriltag_interface.py)](#apriltag-perception-apriltag_interfacepy)
+   - [Hardware Interface (Dynamixel_XW430_T200_interface.py)](#hardware-interface)
+   - [IMU Interface (icm20948_interface.py)](#imu-interface)
+   - [Camera Interface (stellarhd_interface.py)](#camera-interface)
 2. [ROS2 Topic Specifications](#ros2-topic-specifications)
+3. [Mission Format & Feeding](#mission-format--feeding)
 
 ---
 
 ## Node Specifications
 
-### Application Layer (`crab.py`)
-**Gait Engine**
+### Mission Dispatcher (`crab.py`)
+**Deliberative layer — mission dispatcher + configuration master**
 
-Manages behavioral state, command queuing, and motion function execution. Parses high-level robot commands and translates them into time-series motion trajectories.
+crab does two jobs and nothing else: it broadcasts the robot configuration once at startup, and it dispatches missions from an unbounded queue, owning the retry/human-escalation policy. It never reads a sensor or commands a servo.
 
 **Responsibilities:**
-- Parse and queue robot commands from `robot_cmd` ROS2 topic
-- Execute motion functions from motion library at 400 Hz (telemetry-driven)
-- Apply servo offsets and position limits from actuator map
-- Manage command sequencing with cycle-based duration control
-- Support both gait-based (time-series) and direct (immediate) commands
+- Broadcast `robot_config` once on a latched topic (actuator map, operating mode, rates, nominal gait)
+- Buffer missions from `mission_input` in an unbounded FIFO queue
+- Dispatch one mission at a time on `mission_cmd`; advance on `ACHIEVED`
+- Apply override semantics: `none` (queue), `discard` (preempt + drop), `requeue` (preempt + save to front)
+- On `STUCK`: auto-retry up to `max_retries`, then prompt the operator (10 s timeout → move on; "y" grants 2 more)
+- Command `HOVER` when the queue drains
 
 **Input ROS2 Topics:**
-- `robot_cmd` (std_msgs/String): Behavioral command strings
-- `telemetry` (std_msgs/Float32MultiArray): Feedback from controller triggering next gait sample
+- `mission_input` (std_msgs/String): one mission line from a terminal/bash feeder
+- `mission_status` (std_msgs/String): interpreted status/events from the controller
 
 **Output ROS2 Topics:**
-- `motion_cmd` (std_msgs/Float32MultiArray): Commanded positions/velocities with position limits
+- `robot_config` (std_msgs/String, transient_local): one-shot full configuration
+- `mission_cmd` (std_msgs/String): the active mission goal
 
 **Parameters:**
-- `actuator_map`: JSON array `[[id, offset_rad, set_id, min_limit, max_limit], ...]`
+- `actuator_map`: JSON `[[id, homing_offset, set_id, min, max, custom], ...]` — `homing_offset` (rad) is written to the servo by the hardware node; within a set the FIRST entry is roll and the SECOND is pitch; `custom` is an optional spare value (unused)
 - `operating_mode`: 'position' or 'velocity'
-
-**Key Features:**
-- Telemetry-driven execution (no timers, pure feedback-driven)
-- Servo-level and set-level motion function support
-- Dynamic position limit enforcement
-- Command queue with sequential execution
+- `control_rate`, `startup_delay`, `gait_velocity`, `gait_effort`, `default_retries`
 
 ---
 
-### Controller Layer (`controller.py`)
-**The "Kinematic Engine" - Outer-Loop PID Controller**
+### Execution Engine (`controller.py`)
+**Reactive layer — autonomous state machine**
 
-Applies optional outer-loop PID correction on top of servo internal control. Acts as a trajectory conditioner and safety layer between motion commands and hardware.
+The controller is the robot's reactive brain. It owns every real-time sensor, runs a state machine toward the active mission, generates motion from the `motion_command` library, and reports only high-level status to crab.
+
+**State machine:** `BOOT` (deployment-settling countdown) → `WAIT` → `SCANNING` (sweep one body axis at a time, searching) → `LOCKING` (confirm a stable detection) → `HEADING` (swim toward tag) → `STUCK` (zero progress → hover, let crab decide) → `HOVERING` (level, IMU-stabilised hold).
 
 **Responsibilities:**
-- Parse motion commands with embedded position limits
-- Apply outer-loop PID correction (position or velocity mode)
-- Enforce position limits via clamping (position mode) or velocity zeroing (velocity mode)
-- Publish telemetry for gait engine synchronization
-- Run at 400 Hz control rate
+- Build servo/fin structure from `robot_config` (each set = a fin: roll + pitch servo)
+- Wait `startup_delay` seconds after launch before any motion (deployment settling)
+- Fuse IMU orientation + AprilTag distance/bearing into mission progress
+- Resolve a heading mission to its cardinal tag(s), scan to acquire, then swim (currently `flap` only)
+- Detect STUCK (no progress over the stuck window) and report it
+- Compute progress = `0.7·(1 − dist/dist₀) + 0.3·(1 − |bearing|/bearing₀)`
+- Optionally apply outer-loop PID; derive velocity from position in velocity mode
 
 **Input ROS2 Topics:**
-- `motion_cmd` (std_msgs/Float32MultiArray): Wire format `[cmd_id, ids, modes, values, limits]`
-- `joint_feedback` (std_msgs/Float32MultiArray): Encoder feedback from hardware
+- `robot_config` (String, transient_local), `mission_cmd` (String)
+- `joint_feedback` (Float32MultiArray), `imu_data` (sensor_msgs/Imu)
+- `apriltag_detections` (Float32MultiArray)
 
 **Output ROS2 Topics:**
-- `joint_cmd` (std_msgs/Float32MultiArray): Final corrected commands to hardware
-- `telemetry` (std_msgs/Float32MultiArray): Commanded goals + actual feedback for logging/control
+- `joint_cmd` (Float32MultiArray): servo commands `[ids, modes, values]`
+- `mission_status` (std_msgs/String): JSON status/events to crab
+- `telemetry` (Float32MultiArray): commanded goals + feedback for logging
 
 **Parameters:**
-- `kp`, `ki`, `kd`: Outer-loop PID gains (0.0 = open-loop passthrough)
-- `control_rate`: Control loop frequency in Hz (default: 400.0)
-- `telemetry_decimation`: Publish every Nth sample (default: 1)
-
-**Key Features:**
-- Cascaded PID structure (outer + servo internal)
-- Position limit enforcement from motion_cmd
-- DOF-agnostic (handles any number of servos)
-- Telemetry decimation for reduced bandwidth
+- `kp`, `ki`, `kd`: outer-loop PID gains (0.0 = passthrough)
+- `control_rate`, `telemetry_decimation`, `gait_velocity`, `gait_effort`, `max_freq`, `startup_delay`
 
 ---
 
-### Hardware Interface 
+### Motion Command Library (`motion_command.py`)
+**Pure motion math — no ROS, no state**
+
+A flat module of stateless functions the controller composes in its real-time loop. Layered so larger motions are built from smaller ones:
+
+- **Waveforms** `(t, freq, amp, phase) → float`: `sine`, `cosine`, `square`, `triangle`, `sawtooth`, `trapezoid`. The *shape* of a motion is just which one you pass in.
+- **Servo targets** `→ {servo_id: value}`: `drive`, `drive_multi`, `hold`.
+- **Gaits**: `flap(roll_id, pitch_id, …, waveform=sine)` holds roll broadside (π/2) and oscillates pitch around 0; `paddle(…)` is a rowing stroke with a power phase (broadside) and a graceful, feathered, low-drag recovery. The waveform is an argument, so `flap(sine)` and `flap(square)` are the same function, different feel.
+- **Search helper**: `sweep(servo_id, t, rate, span)` — a slow one-axis ramp the controller composes into scanning.
+
+---
+
+### AprilTag Perception (`apriltag_interface.py`)
+**Thin perception interface — camera → heading cues**
+
+Detects AprilTags with OpenCV's ArUco/AprilTag detector, estimates each tag's pose via `solvePnP`, and publishes a compact detection array. The controller consumes only this interpreted output, never raw images. Owns the camera frames it processes (`source: 'camera'` for a local device, `source: 'topic'` for a Gazebo/replay image stream).
+
+**Output ROS2 Topics:**
+- `apriltag_detections` (Float32MultiArray): `[tag_id, distance_m, bearing_rad, elevation_rad, valid]` per tag (bearing > 0 = left, elevation > 0 = up). Empty array = no detection.
+
+**Parameters:**
+- `source` ('camera'/'topic'), `camera_index`, `image_topic`, `detect_rate`, `tag_family`
+- `tag_size` and intrinsics `fx, fy, cx, cy` (set from a camera calibration for real distances)
+
+---
+
+### Hardware Interface
 **Hardware Interface Node - Dynamixel Protocol 2.0**
 
 Exclusive owner of the serial bus. Translates ROS2 commands into Dynamixel SDK protocol packets with synchronized writes to eliminate inter-servo latency.
@@ -176,13 +210,13 @@ Records video continuously and segments recordings based on robot command execut
 
 **Responsibilities:**
 - Configure camera resolution, frame rate, and codec
-- Capture frames continuously and encode video
-- Monitor `robot_cmd` and `telemetry` topics to segment recordings per command
+- Capture frames continuously, republish them on `camera/image_raw` for perception
+- Record video to disk segmented per mission (one file per mission label)
 - Manage video file output and camera configuration
 
 **Input ROS2 Topics:**
-- `robot_cmd` (std_msgs/String): Behavioral command strings (used to detect command start)
-- `telemetry` (std_msgs/Float32MultiArray): Feedback from controller (used to detect command completion)
+- `mission_cmd` (std_msgs/String): JSON mission; new label starts a new recording segment
+- `mission_status` (std_msgs/String): JSON status; `ALL_MISSIONS_DONE` event stops recording
 
 **Parameters:**
 - `camera_index`: OpenCV camera index (default: 0)
@@ -203,164 +237,162 @@ Records video continuously and segments recordings based on robot command execut
 
 | ROS2 Topic | Type | Direction | Wire Format | Purpose |
 |-------|------|-----------|-------------|---------|
-| `robot_cmd` | String | User → crab | Key-value pairs `cmd_id:[1] func:[name] ...` | High-level behavioral commands |
-| `motion_cmd` | Float32MultiArray | crab → controller | `[cmd_id, ids, modes, values, limits]` | Motion commands with position limits |
+| `mission_input` | String | bash → crab | `heading:NE velocity:6 effort:0.6 distance:0.1 override:none` | Enqueue / override missions |
+| `robot_config` | String (latched) | crab → all | JSON config object | One-shot robot configuration |
+| `mission_cmd` | String | crab → controller | JSON `{kind, label, max_retries, heading?, target_tag_id?, velocity?, effort?, distance?}` | Active mission goal |
+| `mission_status` | String | controller → crab | JSON `{label, state, progress, orientation, event}` | Interpreted mission status |
+| `manual_cmd` | String | bash → controller | `gait set:1 freq:1.0 amp:0.6` / `drive id:3 pos:0.5` / `stop` | Lab teleop — overrides missions while armed |
+| `apriltag_detections` | Float32MultiArray | perception → controller | `[tag_id, dist, bearing, elev, valid]` per tag | Heading cues |
 | `joint_cmd` | Float32MultiArray | controller → hardware | `[ids, modes, values]` | Final servo commands |
 | `joint_feedback` | Float32MultiArray | hardware → controller | `[id, mode, pos, vel, curr, volt]` per servo | Encoder feedback |
-| `telemetry` | Float32MultiArray | controller → crab | `[cmd_id, sample, goal, pos, vel, curr, volt]` per servo | Control loop synchronization |
-| `imu_data` | Imu | IMU → all | ROS2 standard message | Linear acceleration and angular velocity |
+| `imu_data` | Imu | IMU → controller | ROS2 standard message | Orientation, angular velocity, accel |
 | `mag_data` | MagneticField | IMU → all | ROS2 standard message | Magnetic field strength |
+| `telemetry` | Float32MultiArray | controller → logging | `[seq, sample, goal, pos, vel, curr, volt]` per servo | Logging / analysis |
 
 ### Topic Details
 
-#### `robot_cmd` (User Input)
-**Format:** `"cmd_id:[id] func:[name] freq:[hz] amp:[rad] phase:[rad] cycles:[n] sets:[s1,s2,...] freq_ratio:[r] amp_ratio:[r] phase_offset:[rad]"`
-
-**Command Types:**
-
-1. **Gait Commands** (time-based trajectories):
-```bash
-cmd_id:[1] func:[sine_flap] freq:[0.5] amp:[1.0] phase:[0.0] cycles:[3] sets:[1]
+#### `robot_config` (latched, crab → all)
+JSON broadcast once at startup; late subscribers still receive it (transient_local QoS):
+```json
+{
+  "actuator_map": [[4, 0.0, 1, -3.14, 3.14], [3, 0.0, 1, -1.57, 1.57]],
+  "cardinal_map": {"N": 0, "E": 1, "S": 2, "W": 3},
+  "operating_mode": "position",
+  "control_rate": 400.0,
+  "startup_delay": 10.0,
+  "gait_velocity": 3.77,
+  "gait_effort": 0.6
+}
 ```
-- `cmd_id`: Unique command identifier
-- `func`: Motion function name from motion_library.py
-- `freq`: Oscillation frequency (Hz)
-- `amp`: Amplitude (radians or rad/s)
-- `phase`: Phase offset (radians)
-- `cycles`: Number of oscillation cycles
-- `sets`: Which servo sets to activate
-- **Optional kwargs:** `freq_ratio`, `amp_ratio`, `phase_offset`, or any custom parameters
+Each set is one fin; within a set the first servo is roll and the second is pitch (positional convention — only the gaits care which is which). The hardware node reads `actuator_map` for the per-servo homing offsets; the controller reads `cardinal_map` to resolve heading missions to tag ids.
 
-2. **Direct Commands** (immediate):
-```bash
-cmd_id:[1] func:[drive] servo:[3] value:[0.5]
-cmd_id:[2] func:[drive_multi] servos:{3:0.5, 4:-0.3}
+#### `mission_cmd` (crab → controller)
+```json
+{"kind": "heading", "heading": "NE", "label": "NE", "max_retries": 2,
+ "velocity": 6.0, "effort": 0.6, "distance": 0.1}
 ```
-- Commands servos immediately and persists until overwritten
+`kind` is `heading` (swim a compass direction), `scan` (search only), `hover` (hold station), or `tag` (legacy single-tag seek). The controller owns sequencing: a heading mission scans for its cardinal tag(s) itself, then heads. ACHIEVED when facing the heading and within `distance` (m) of the reference tag.
 
-#### `motion_cmd` Wire Format
-**Structure:** `[cmd_id, id0, id1, ..., mode0, mode1, ..., val0, val1, ..., min0, max0, min1, max1, ...]`
-
-**Example (2 servos):**
+#### `mission_status` (controller → crab)
+```json
+{"label": "NORTH", "target_tag_id": 3, "state": "HEADING",
+ "progress": 42.5, "orientation": [roll, pitch, yaw], "event": "TAG_ACQUIRED"}
 ```
-[1.0,           # cmd_id
- 3.0, 4.0,      # servo IDs
- 3.0, 3.0,      # modes (3=position, 1=velocity)
- 2.5, 3.2,      # commanded values (rad or rad/s)
- -8.0, 8.0,     # servo 3 limits (min, max)
- -8.0, 8.0]     # servo 4 limits (min, max)
-```
+`state` is the current state-machine state; `event` is a one-shot transition marker (`MISSION_BEGIN`, `TAG_DETECTED`, `TAG_ACQUIRED`, `TAG_LOST`, `ACHIEVED`, `STUCK`, `ALL_MISSIONS_DONE`). Plain progress updates carry `event: null`.
 
-**Key Feature:** Position limits embedded in wire format - single source of truth from actuator_map
+#### `apriltag_detections` (perception → controller)
+**Structure:** `[tag_id, distance_m, bearing_rad, elevation_rad, valid]` repeated per tag. `bearing > 0` = tag to the left, `elevation > 0` = above centre, `valid = 1.0`. An empty array means no tag in view.
 
 #### `joint_cmd` Wire Format
-**Structure:** `[id0, id1, ..., mode0, mode1, ..., val0, val1, ...]`
-
-Final commands after PID correction and limit enforcement.
+**Structure:** `[id0, id1, ..., mode0, mode1, ..., val0, val1, ...]` — mode 3.0 = position, 1.0 = velocity. Final commands after offsets, limits, and any PID correction.
 
 #### `joint_feedback` Wire Format
-**Structure:** `[id, mode, pos_rad, vel_rad_s, curr_A, volt_V]` repeated per servo
-
-Encoder feedback at 500 Hz from hardware interface.
+**Structure:** `[id, mode, pos_rad, vel_rad_s, curr_A, volt_V]` repeated per servo, at 500 Hz from the hardware interface.
 
 #### `telemetry` Wire Format
-**Structure:** `[cmd_id, sample, goal0, pos0, vel0, curr0, volt0, goal1, pos1, vel1, curr1, volt1, ...]`
-
-Control loop data at 400 Hz for synchronization and logging.
+**Structure:** `[seq, sample, goal0, pos0, vel0, curr0, volt0, goal1, ...]` — `seq` is the mission sequence number; per-servo commanded goal + actual feedback for logging.
 
 ---
 
-## Motion Library (`motion_library.py`)
+## Mission Format & Feeding
 
-The motion library contains all motion functions. Each function receives core parameters `(t, freq, amp, phase)` and optional custom parameters via `**kwargs`.
+Missions are fed at runtime as plain text lines on `/mission_input`:
 
-### Motion Function Signature
+A mission is one of four kinds (the controller owns all sequencing):
+
+```
+heading:<dir> velocity:<v> effort:<a> distance:<m> ...   # swim a compass heading
+scan ...                                                 # sweep / search only
+hover ...                                                # hold station
+tag:<id> ...                                             # legacy single-tag seek
+```
+
+| Field | Required | Default | Meaning |
+|-------|----------|---------|---------|
+| `heading` | heading mission | — | one of `N NE E SE S SW W NW`; intercardinals steer to the bisector of two cardinal tags |
+| `tag` | tag mission | — | target AprilTag id (legacy single-tag seek) |
+| `distance` | no | `0.30` | arrival distance (m): ACHIEVED when facing the heading and within this of the reference tag |
+| `velocity` | no | `gait_velocity` | peak stroke rate (rad/s) for this mission |
+| `effort` | no | `gait_effort` | stroke amplitude (rad); controller derives `freq = velocity / (2π·effort)` |
+| `label` | no | heading/kind | human-readable name (used to match status) |
+| `retries` | no | 2 | auto-retries on STUCK before asking the operator |
+| `override` | no | `none` | `none` = queue at back; `discard` = preempt + drop current; `requeue` = preempt + push current to front |
+
+**Retry / escalation:** on `STUCK`, crab silently re-sends the mission up to `retries` times. Once exhausted it prompts on the terminal and waits 10 s — `y` grants 2 fresh retries, `n` or a timeout moves on to the next mission.
+
+**Feeding missions** (run after the stack is launched):
+```bash
+# Built-in demo sequence (one mission every 3 s)
+ros2 run soft_propulsors_control feed_missions.sh        # if installed
+# or directly from source:
+src/soft_propulsors_control/scripts/feed_missions.sh missions.txt 3
+
+# Or push a single mission by hand:
+ros2 topic pub --once /mission_input std_msgs/msg/String \
+  "{data: 'heading:NE velocity:6 effort:0.6 distance:0.1 override:none'}"
+```
+
+When crab prompts for a stuck mission, answer on the terminal where crab is running (the `y`/`n` prompt has a 10 s timeout).
+
+### Manual / bench teleop (`manual_cmd`)
+
+A lab-only channel for poking servos directly. While a manual command is armed it **overrides the mission state machine** (one node, one bus), so use it when no mission is running. Raw freq/amp (rad); limits still apply. A deadman (`manual_timeout`, default 30 s, `:=0` to disable) holds neutral if commands stop arriving. crab must be up so the controller has the actuator map.
+
+```bash
+# Flap fin (set 1) at 1 Hz, 0.6 rad amplitude
+ros2 topic pub --once /manual_cmd std_msgs/msg/String "{data: 'gait set:1 freq:1.0 amp:0.6'}"
+# Sweep a single servo
+ros2 topic pub --once /manual_cmd std_msgs/msg/String "{data: 'gait id:3 rate:0.2 span:1.0'}"
+# Drive a servo to a static position
+ros2 topic pub --once /manual_cmd std_msgs/msg/String "{data: 'drive id:3 pos:0.5'}"
+# Release back to the mission flow
+ros2 topic pub --once /manual_cmd std_msgs/msg/String "{data: 'stop'}"
+```
+
+---
+
+## Motion Command Library (`motion_command.py`)
+
+A flat module of pure, stateless functions — no ROS, no `self`, no node reference. The controller imports what it needs and composes these in its real-time loop.
+
+### Layers
+
+**Waveforms** — `(t, freq, amp, phase) → float`:
 ```python
-def my_motion(self, t: float, freq: float, amp: float, phase: float, **kwargs) -> dict:
-    """
-    Core Parameters:
-        t: Time (seconds)
-        freq: Frequency (Hz)
-        amp: Amplitude (radians or rad/s)
-        phase: Phase offset (radians)
-    
-    Kwargs:
-        custom_param (type): Description (default: value)
-    
-    Returns:
-        dict: {servo_id: value} or {set_id: value}
-    """
-    custom_param = kwargs.get('custom_param', default_value)
-    # ... motion logic ...
-    return {servo_id: value}
+mc.sine(t, freq, amp, phase)       # smooth sinusoid
+mc.cosine(t, freq, amp, phase)     # 90°-shifted sinusoid
+mc.square(t, freq, amp, phase, duty=0.5)
+mc.triangle(t, freq, amp, phase)
+mc.sawtooth(t, freq, amp, phase)
+mc.trapezoid(t, freq, amp, phase, ramp=0.25)
 ```
 
-### Available Motion Functions
-
-**Direct Control:**
-- `drive(servo, value)`: Single servo control
-- `drive_multi(**kwargs)`: Multiple servo control via `servos:{3:0.5, 4:-0.3}` or individual kwargs
-
-**Waveform Functions:**
-- `sine()`: Smooth sinusoidal oscillation
-- `square()`: Bang-bang control with duty cycle
-- `triangle()`: Constant-velocity sweeps
-- `sawtooth()`: Linear ramp with instant reset
-- `step()`: Discrete state switching
-- `trapezoid()`: Smooth acceleration/deceleration
-
-**Flapping Functions:**
-- `sine_flap()`: Differential phase/frequency/amplitude between servo pairs
-  - Default: 90° phase offset for standard flapping
-  - Supports `freq_ratio`, `amp_ratio`, `phase_offset` kwargs
-- `sine_paddle()`: Rowing motion with sawtooth + sine pairing
-
-### Adding Custom Motion Functions
-
-1. Add function to `MotionLibrary` class in `motion_library.py`
-2. Use signature: `def my_motion(self, t, freq, amp, phase, **kwargs)`
-3. Extract custom parameters: `my_param = kwargs.get('my_param', default)`
-4. Return `{servo_id: value}` or `{set_id: value}`
-5. Rebuild: `colcon build && source install/setup.bash`
-6. Use in robot_cmd: `func:[my_motion] freq:[0.5] my_param:[2.5] cycles:[3] sets:[1]`
-
-**Access to servo configuration:**
-- `self.node.all_ids`: List of all servo IDs
-- `self.node.set_map`: `{set_id: [servo_ids...]}`
-- `self.node.offsets`: `{servo_id: offset_rad}`
-- `self.node.position_limits`: `{servo_id: (min, max)}`
-
-### Usage Examples
-
-**Basic flapping (90° phase offset):**
-```bash
-ros2 topic pub --once /robot_cmd std_msgs/String \
-  "data: 'cmd_id:[1] func:[sine_flap] freq:[0.5] amp:[1.0] phase:[0.0] cycles:[3] sets:[1]'"
+**Servo targets** — `→ {servo_id: value}`:
+```python
+mc.drive(servo_id, value)          # one servo
+mc.drive_multi({3: 0.5, 4: -0.3})  # several at once
+mc.hold([3, 4], value=0.0)         # hold a group at one value
 ```
 
-**Custom phase offset (180°):**
-```bash
-ros2 topic pub --once /robot_cmd std_msgs/String \
-  "data: 'cmd_id:[1] func:[sine_flap] freq:[0.5] amp:[1.0] phase_offset:[3.14] cycles:[3] sets:[1]'"
+**Gaits** — coordinated roll + pitch fin motion (waveform is an argument):
+```python
+# Roll held broadside (π/2), pitch oscillates around 0 with the chosen waveform
+mc.flap(roll_id, pitch_id, t, freq, amp, waveform=mc.sine)
+
+# Rowing stroke: broadside power phase + graceful feathered recovery
+mc.paddle(roll_id, pitch_id, t, freq, amp, power_fraction=0.5)
 ```
 
-**Different frequencies (even servo 2x faster):**
-```bash
-ros2 topic pub --once /robot_cmd std_msgs/String \
-  "data: 'cmd_id:[1] func:[sine_flap] freq:[0.5] amp:[1.0] freq_ratio:[2.0] cycles:[3] sets:[1]'"
+**Search helper**:
+```python
+mc.sweep(servo_id, t, rate, span)  # slow one-axis triangle sweep for scanning
 ```
 
-**Hold one servo, oscillate other:**
-```bash
-ros2 topic pub --once /robot_cmd std_msgs/String \
-  "data: 'cmd_id:[1] func:[sine_flap] freq:[0.5] amp:[1.0] freq_ratio:[0.0] amp_ratio:[1.0] cycles:[3] sets:[1]'"
-```
-
-**Direct multi-servo control:**
-```bash
-ros2 topic pub --once /robot_cmd std_msgs/String \
-  "data: 'cmd_id:[1] func:[drive_multi] servos:{3:0.5, 4:-0.3}'"
-```
+### Adding a new gait
+1. Write a pure function in `motion_command.py` that returns `{servo_id: value}`, composing the waveform and `drive` helpers.
+2. Accept the waveform as an argument (`waveform=mc.sine`) so the shape stays interchangeable.
+3. Call it from the controller's motion-generation methods, passing the fin's `roll_id`/`pitch_id`.
+4. Rebuild: `colcon build && source install/setup.bash`.
 
 ---
 
@@ -369,7 +401,7 @@ ros2 topic pub --once /robot_cmd std_msgs/String \
 Automated data collection script for ROS2 bag recording, CSV extraction, and plot generation organized by servo and command.
 
 **Features:**
-- Records all control ROS2 topics (`robot_cmd`, `motion_cmd`, `joint_cmd`, `joint_feedback`, `telemetry`)
+- Records all control ROS2 topics (`mission_input`, `mission_cmd`, `mission_status`, `apriltag_detections`, `joint_cmd`, `joint_feedback`, `telemetry`)
 - Supports both mcap and sqlite3 bag formats (auto-detects)
 - Extracts master CSVs for all ROS2 topics
 - Generates CSV snippets per servo per command for focused analysis
@@ -393,24 +425,28 @@ python3 recorder.py session_name
 session_name/
 ├── rosbag/                    # ROS2 bag files (mcap or sqlite3)
 ├── csv/                       # Master CSV files (all data)
-│   ├── robot_cmd.csv
-│   ├── motion_cmd.csv
+│   ├── mission_input.csv
+│   ├── mission_cmd.csv
+│   ├── mission_status.csv
+│   ├── apriltag_detections.csv
 │   ├── joint_cmd.csv
 │   ├── joint_feedback.csv
 │   └── telemetry.csv
 └── plots/
     ├── master/
-    │   └── plots/            # System-wide plots (all servos combined)
-    │       ├── telemetry_all_positions.png
-    │       ├── telemetry_all_velocities.png
-    │       ├── telemetry_all_currents.png
-    │       ├── telemetry_all_voltages.png
-    │       ├── feedback_all_positions.png
-    │       ├── feedback_all_velocities.png
-    │       ├── feedback_all_currents.png
-    │       ├── feedback_all_voltages.png
-    │       ├── motion_cmd_ids.png
-    │       └── joint_cmd_length.png
+    │   └── plots/            # System-wide plots
+    │       ├── telemetry_positions.png
+    │       ├── telemetry_velocities.png
+    │       ├── telemetry_currents.png
+    │       ├── telemetry_voltages.png
+    │       ├── feedback_positions.png
+    │       ├── feedback_velocities.png
+    │       ├── feedback_currents.png
+    │       ├── feedback_voltages.png
+    │       ├── mission_progress.png
+    │       ├── mission_orientation.png
+    │       ├── apriltag_distance.png
+    │       └── apriltag_bearing.png
     ├── servo_3/
     │   ├── master/
     │   │   └── plots/        # All commands for servo 3
@@ -629,7 +665,7 @@ Hybrid Configuration     →  Real feedback for IDs [1,2], Sim feedback for IDs 
 **[Gazebo Screenshots - To Be Uploaded]**
 s
 - Gazebo environment with robot model
-- Robot executing sine_flap gait in simulation
+- Robot executing flap / paddle gaits in simulation
 - Hybrid mode (real + simulated servos) visualization
 - Camera view from simulated camera
 
@@ -639,12 +675,11 @@ s
 
 **Start Simulation:**
 ```bash
-# Launch Gazebo with all simulated interfaces
-ros2 launch compliant_propulsors_control gazebo_launch.py
+# Launch Gazebo with all simulated interfaces (includes AprilTag perception)
+ros2 launch soft_propulsors_control gazebo_launch.py
 
-# In another terminal, send commands (same as hardware)
-ros2 topic pub --once /robot_cmd std_msgs/String \
-  "data: 'cmd_id:[1] func:[sine_flap] freq:[0.5] amp:[1.0] cycles:[3] sets:[1]'"
+# In another terminal, feed missions (same interface as hardware)
+src/soft_propulsors_control/scripts/feed_missions.sh missions.txt 3
 
 # Record simulation data
 python3 recorder.py sim_session_1
@@ -653,7 +688,7 @@ python3 recorder.py sim_session_1
 **Hybrid Mode (Partial Hardware):**
 ```bash
 # Connect 2 real servos via USB, launch Gazebo
-ros2 launch compliant_propulsors_control gazebo_launch.py
+ros2 launch soft_propulsors_control gazebo_launch.py
 
 # System auto-detects servos and merges feedback:
 # INFO: Detected real servo ID 1
@@ -774,7 +809,7 @@ Integration testing validates subsystem interactions, progressing from simulated
 Control algorithms are validated against the Gazebo kinematic model before hardware deployment. The simulation environment itself is validated first (see Gazebo Testing and Validation under the Gazebo Simulation section).
 
 **Automated Test Suites:**
-- `test_position_mode.sh` — 31 position control tests (drive commands, sine_flap variations, phase offsets, waveforms, edge cases)
+- `test_position_mode.sh` — 31 position control tests (drive commands, flap/paddle variations, phase offsets, waveforms, edge cases)
 - `test_velocity_mode.sh` — 32 velocity control tests (tracking, boundary enforcement, ramp response)
 
 Total: 63 automated SIL tests.
@@ -812,7 +847,7 @@ Each hardware subsystem is verified with its ROS2 interface node operating in th
 | Test | Acceptance Criteria |
 |------|---------------------|
 | Frame acquisition | 30 ±2 FPS at 1920×1080 |
-| Command-synchronized video recording | Recording starts/stops on `robot_cmd` transitions |
+| Mission-synchronized video recording | Recording segments on `mission_cmd` / `mission_status` transitions |
 | Recording integrity (60-second capture) | MP4 playback without corruption |
 | AprilTag detection in FOV | Detection at 2m range, <1° orientation error |
 
@@ -974,12 +1009,15 @@ Regression testing detects performance degradation on code changes. Baseline rec
 
 **Python Packages:**
 ```bash
-pip install dynamixel-sdk numpy pandas matplotlib --break-system-packages
+pip install dynamixel-sdk numpy pandas matplotlib opencv-python --break-system-packages
 ```
+`opencv-python` provides the ArUco/AprilTag detector used by `apriltag_interface`.
 
 **ROS 2 Packages:**
 ```bash
 sudo apt install ros-jazzy-ros-base ros-jazzy-joint-state-publisher ros-jazzy-robot-state-publisher
+# cv_bridge is only needed for apriltag_interface in 'topic' (Gazebo) mode:
+sudo apt install ros-jazzy-cv-bridge
 ```
 
 **Gazebo (Optional - for simulation):**
@@ -1011,25 +1049,27 @@ source install/setup.bash
 
 **Hardware Mode:**
 ```bash
-# Launch full control stack with real servos
-ros2 launch compliant_propulsors_control crab_launch.py
+# Launch full autonomous stack with real servos, IMU, and camera perception
+ros2 launch soft_propulsors_control crab_launch.py
 
-# In another terminal, send commands
-ros2 topic pub --once /robot_cmd std_msgs/String \
-  "data: 'cmd_id:[1] func:[sine_flap] freq:[0.5] amp:[1.0] cycles:[3] sets:[1]'"
+# In another terminal, feed the mission queue (one mission every 3 s)
+src/soft_propulsors_control/scripts/feed_missions.sh missions.txt 3
 
 # Record session data
 python3 recorder.py test_session_1
 ```
 
+The robot waits `startup_delay` seconds after launch (deployment settling) before
+moving — launch on land, then drop it in the water within that window. It then
+scans for each mission's AprilTag and heads toward it autonomously.
+
 **Simulation Mode:**
 ```bash
-# Launch Gazebo simulation
-ros2 launch compliant_propulsors_control gazebo_launch.py
+# Launch Gazebo simulation (same control stack + simulated camera/IMU)
+ros2 launch soft_propulsors_control gazebo_launch.py
 
-# Send commands (same interface as hardware)
-ros2 topic pub --once /robot_cmd std_msgs/String \
-  "data: 'cmd_id:[1] func:[sine_flap] freq:[0.5] amp:[1.0] cycles:[3] sets:[1]'"
+# Feed missions (same interface as hardware)
+src/soft_propulsors_control/scripts/feed_missions.sh missions.txt 3
 
 # Record simulation data
 python3 recorder.py sim_test_session_1

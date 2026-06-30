@@ -1,0 +1,10 @@
+Scenario,Name,Phase,Requirements,MOPs,Verification
+SC-0,Watertight integrity (every run),PH-1 / PH-6,SYS-003; SYS-004,,VER-003; VER-004
+SC-1,Deploy & settle,PH-1,SYS-015; SYS-006,,VER-015; VER-006b
+SC-2,Acquire & approach (primary MOE),PH-2 / PH-3,SYS-001; SYS-002; SYS-007; SYS-008,MOP-01; MOP-02; MOP-03,VER-001; VER-002; VER-007; VER-008
+SC-3,Search (tag not in initial FOV),PH-2,SYS-009,,VER-009
+SC-4,Tag sequence + preemption,PH-4,SYS-005; SYS-011,,VER-005; VER-011
+SC-5,Stuck & escalate,PH-2 / PH-3,SYS-010,,VER-010
+SC-6,Return home,PH-5,SYS-014,,VER-014
+SC-7,Recover,PH-6,SYS-012; SYS-006,,VER-012; VER-006b
+SC-8,Endurance session,PH-1 .. PH-6,SYS-013,,VER-013

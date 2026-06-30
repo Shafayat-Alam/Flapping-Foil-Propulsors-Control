@@ -1,0 +1,72 @@
+# =====================================================================
+# opm.yaml — Object-Process Methodology model (Dori OPM / ISO 19450),
+# the system-modeling language from MIT 16.842 Ses3.  This is the
+# source for the auto-generated OPL (Object-Process Language) sentences
+# and the OPD (Object-Process Diagram).
+#
+#   Objects  = things that exist (stateful).   essence: physical|informatical
+#                                              affiliation: systemic|environmental
+#   Processes = things that transform objects.
+#   Links (procedural):
+#     agent       human/intelligent enabler   -> OPL "<Object> handles <Process>."
+#     instrument  non-consumed enabler         -> OPL "<Process> requires <Object>."
+#     consumption process consumes object      -> OPL "<Process> consumes <Object>."
+#     result      process yields object        -> OPL "<Process> yields <Object>."
+#     effect      process changes object state -> OPL "<Process> changes <Object>
+#                                                       from <s1> to <s2>."
+# =====================================================================
+opm:
+  objects:
+    - {id: O-VEH,        name: "Vehicle",     essence: physical,     affiliation: systemic,
+       states: [Stowed, Searching, Homing, Arrived, Stuck, AtHome]}
+    - {id: O-MISSION,    name: "Mission",     essence: informatical, affiliation: systemic,
+       states: [Queued, Active, Achieved, Failed]}
+    - {id: O-TAG,        name: "Tag",         essence: physical,     affiliation: environmental}
+    - {id: O-DETECTION,  name: "Detection",   essence: informatical, affiliation: systemic}   # Round 4: bearing + range
+    - {id: O-HOME,       name: "HomePosition", essence: physical,    affiliation: environmental}  # Round 4: pool centre
+    - {id: O-OPERATOR,   name: "Operator",    essence: physical,     affiliation: environmental}
+    - {id: O-DISPATCHER, name: "Dispatcher",  essence: informatical, affiliation: systemic}
+    - {id: O-CONTROLLER, name: "Controller",  essence: informatical, affiliation: systemic}
+    - {id: O-PERCEPTION, name: "Perception",  essence: informatical, affiliation: systemic}
+    - {id: O-PROPULSOR,  name: "Propulsor",   essence: physical,     affiliation: systemic}
+
+  processes:
+    - {id: P-DISPATCH, name: "Dispatching"}
+    - {id: P-SEARCH,   name: "Searching"}
+    - {id: P-DETECT,   name: "Detecting"}
+    - {id: P-HOME,     name: "Homing"}
+    - {id: P-RETURN,   name: "Returning"}
+    - {id: P-ESCALATE, name: "Escalating"}
+    - {id: P-RECOVER,  name: "Recovering"}
+
+  links:
+    # Dispatching: operator gives a mission via the dispatcher
+    - {process: P-DISPATCH, type: agent,      object: O-OPERATOR}
+    - {process: P-DISPATCH, type: instrument, object: O-DISPATCHER}
+    - {process: P-DISPATCH, type: result,     object: O-MISSION, to_state: Active}
+    # Searching: controller + perception sweep until the tag is seen
+    - {process: P-SEARCH, type: instrument, object: O-CONTROLLER}
+    - {process: P-SEARCH, type: instrument, object: O-PERCEPTION}
+    - {process: P-SEARCH, type: effect,     object: O-VEH, from_state: Stowed, to_state: Searching}
+    # Detecting: perception turns the tag into a detection (bearing + range)
+    - {process: P-DETECT, type: instrument, object: O-PERCEPTION}
+    - {process: P-DETECT, type: instrument, object: O-TAG}
+    - {process: P-DETECT, type: result,     object: O-DETECTION}
+    # Homing: controller drives the propulsors toward the tag using the detection
+    - {process: P-HOME, type: instrument, object: O-CONTROLLER}
+    - {process: P-HOME, type: instrument, object: O-PROPULSOR}
+    - {process: P-HOME, type: instrument, object: O-DETECTION}
+    - {process: P-HOME, type: effect,     object: O-VEH,     from_state: Searching, to_state: Arrived}
+    - {process: P-HOME, type: effect,     object: O-MISSION, from_state: Active,    to_state: Achieved}
+    # Returning: navigate to the home position (pool centre) via bearing + range
+    - {process: P-RETURN, type: instrument, object: O-CONTROLLER}
+    - {process: P-RETURN, type: instrument, object: O-PROPULSOR}
+    - {process: P-RETURN, type: instrument, object: O-DETECTION}
+    - {process: P-RETURN, type: instrument, object: O-HOME}
+    - {process: P-RETURN, type: effect,     object: O-VEH, from_state: Arrived, to_state: AtHome}
+    # Escalating: on no progress, vehicle is Stuck; operator decides, retry resumes search
+    - {process: P-ESCALATE, type: agent,  object: O-OPERATOR}
+    - {process: P-ESCALATE, type: effect, object: O-VEH, from_state: Stuck, to_state: Searching}
+    # Recovering: operator lifts the (negatively buoyant) vehicle off the floor at home
+    - {process: P-RECOVER, type: agent,  object: O-OPERATOR}
+    - {process: P-RECOVER, type: effect, object: O-VEH, from_state: AtHome, to_state: Stowed}

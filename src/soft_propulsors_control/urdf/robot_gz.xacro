@@ -1,0 +1,96 @@
+<?xml version="1.0" ?>
+<!--
+  robot_gz.xacro — Gazebo Harmonic wrapper for the prototype
+  ==========================================================
+  The prototype_description package is a ROS1-style CAD export: its
+  prototype.gazebo uses libgazebo_ros_control.so (Gazebo Classic) and defines
+  no gz-sim systems or sensors.  We must NOT modify prototype_description, so
+  this wrapper (owned by soft_propulsors_control) includes that description
+  unchanged and ADDS the Gazebo Harmonic (gz-sim) integration on top:
+
+    * JointStatePublisher        -> publishes joint states
+    * JointPositionController x4  -> one per continuous joint, position command
+    * IMU sensor on base_link    -> gz topic /imu
+    * camera sensor on stellarhd -> gz topic /camera
+
+  The legacy libgazebo_ros_control.so plugin pulled in by prototype.gazebo
+  simply fails to load under Harmonic (a warning) and is ignored.
+
+  Joint names come straight from the CAD export (they contain spaces):
+    Revolute 29  right pitch foil   (right_pitch_servo -> right_pitch_FRX430-H105K)
+    Revolute 31  left  foil          (left_pitch_servo  -> left_FRX430-S105K)
+    Revolute 33  left  foil          (left_roll_servo   -> left_FRX430-H105K)
+    Revolute 34  right foil          (right_roll_servo  -> right_FRX430-S105K)
+
+  Command topics replace the space with '_' so they are valid topic names:
+    /prototype/Revolute_29/cmd_pos  ... etc.  (gz.msgs.Double, bridged from Float64)
+
+  PID gains and the camera pose are starting points — tune in a live bring-up.
+-->
+<robot name="prototype" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Pull in the untouched CAD description (links, joints, ROS1 gazebo tags) -->
+  <xacro:include filename="$(find prototype_description)/urdf/prototype.xacro" />
+
+  <!-- ============ Gazebo Harmonic model systems ============ -->
+  <gazebo>
+    <plugin filename="gz-sim-joint-state-publisher-system"
+            name="gz::sim::systems::JointStatePublisher">
+    </plugin>
+
+    <plugin filename="gz-sim-joint-position-controller-system"
+            name="gz::sim::systems::JointPositionController">
+      <joint_name>Revolute 29</joint_name>
+      <topic>/prototype/Revolute_29/cmd_pos</topic>
+      <p_gain>10.0</p_gain><i_gain>0.1</i_gain><d_gain>1.0</d_gain>
+    </plugin>
+    <plugin filename="gz-sim-joint-position-controller-system"
+            name="gz::sim::systems::JointPositionController">
+      <joint_name>Revolute 31</joint_name>
+      <topic>/prototype/Revolute_31/cmd_pos</topic>
+      <p_gain>10.0</p_gain><i_gain>0.1</i_gain><d_gain>1.0</d_gain>
+    </plugin>
+    <plugin filename="gz-sim-joint-position-controller-system"
+            name="gz::sim::systems::JointPositionController">
+      <joint_name>Revolute 33</joint_name>
+      <topic>/prototype/Revolute_33/cmd_pos</topic>
+      <p_gain>10.0</p_gain><i_gain>0.1</i_gain><d_gain>1.0</d_gain>
+    </plugin>
+    <plugin filename="gz-sim-joint-position-controller-system"
+            name="gz::sim::systems::JointPositionController">
+      <joint_name>Revolute 34</joint_name>
+      <topic>/prototype/Revolute_34/cmd_pos</topic>
+      <p_gain>10.0</p_gain><i_gain>0.1</i_gain><d_gain>1.0</d_gain>
+    </plugin>
+  </gazebo>
+
+  <!-- ============ IMU sensor (base_link) ============ -->
+  <gazebo reference="base_link">
+    <sensor name="imu_sensor" type="imu">
+      <always_on>1</always_on>
+      <update_rate>100</update_rate>
+      <topic>imu</topic>
+      <gz_frame_id>base_link</gz_frame_id>
+    </sensor>
+  </gazebo>
+
+  <!-- ============ Camera sensor (StellarHD mount) ============
+       Resolution/FOV match apriltag_interface intrinsics
+       (fx=1000, cx=960, cy=540 @ 1920x1080; hfov = 2*atan(960/1000) = 1.5304 rad).
+       Adjust <pose> to point the camera forward once verified in sim. -->
+  <gazebo reference="stellarhd-wetlink_1">
+    <sensor name="camera_sensor" type="camera">
+      <always_on>1</always_on>
+      <update_rate>30</update_rate>
+      <topic>camera</topic>
+      <gz_frame_id>stellarhd-wetlink_1</gz_frame_id>
+      <pose>0 0 0 0 0 0</pose>
+      <camera>
+        <horizontal_fov>1.5304</horizontal_fov>
+        <image><width>1920</width><height>1080</height><format>R8G8B8</format></image>
+        <clip><near>0.05</near><far>100.0</far></clip>
+      </camera>
+    </sensor>
+  </gazebo>
+
+</robot>

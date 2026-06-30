@@ -1,0 +1,55 @@
+# =====================================================================
+# architecture.yaml — physical/functional components + interfaces.
+# Seeded from the ACTUAL ROS 2 stack and hardware (factual, not assumed).
+# Refined in later interview rounds (ports, missing components).
+# =====================================================================
+components:
+  # ---- top-level vehicle ----
+  - {id: C-VEH,    name: "UUV vehicle",            domain: system,     parent: EL-VEH}
+
+  # ---- software (ROS 2 nodes) ----
+  - {id: C-CRAB,   name: "crab (mission dispatcher)", domain: software, parent: C-VEH,
+     description: "Deliberative: mission queue, retries, operator escalation, config master."}
+  - {id: C-CTRL,   name: "controller (execution engine)", domain: software, parent: C-VEH,
+     description: "Reactive: state machine, sensor fusion, gait selection."}
+  - {id: C-MOTION, name: "motion_command (gait math)", domain: software, parent: C-CTRL,
+     description: "Pure stateless waveform/gait functions."}
+  - {id: C-APRIL,  name: "apriltag_interface (perception)", domain: software, parent: C-VEH,
+     description: "AprilTag detection -> range/bearing."}
+  - {id: C-DXLIF,  name: "dynamixel interface",     domain: software,   parent: C-VEH}
+  - {id: C-IMUIF,  name: "imu interface",           domain: software,   parent: C-VEH}
+  - {id: C-CAMIF,  name: "stellarhd interface",     domain: software,   parent: C-VEH,
+     description: "Sole camera owner; republishes frames + records per mission."}
+
+  # ---- electrical / hardware ----
+  - {id: C-COMPUTE, name: "Jetson Orin Nano",       domain: electrical, parent: C-VEH}
+  - {id: C-SERVO,   name: "Dynamixel XW430-T200 x4", domain: electrical, parent: C-VEH}
+  - {id: C-IMU,     name: "ICM-20948 IMU",          domain: electrical, parent: C-VEH}
+  - {id: C-CAM,     name: "StellarHD camera",       domain: electrical, parent: C-VEH}
+  - {id: C-POWER,   name: "3S LiPo + dual rail",    domain: electrical, parent: C-VEH}
+
+  # ---- mechanical ----
+  - {id: C-ENCL,    name: "Aluminum electronics enclosure", domain: mechanical, parent: C-VEH}
+  - {id: C-FIN,     name: "Soft flapping fins x2",  domain: mechanical, parent: C-VEH,
+     description: "Garolite + carbon-fiber rod; interchangeable surface."}
+  - {id: C-HULL,    name: "Garolite structural base", domain: mechanical, parent: C-VEH}
+
+  # ---- enabling (outside vehicle) ----
+  - {id: C-OPC,     name: "Operator console",       domain: enabling,   parent: EL-OPC}
+
+# Interfaces — ROS 2 topics (factual) + key physical interfaces.
+interfaces:
+  - {id: IF-MISIN,  name: "mission_input",   kind: ros_topic, type: "std_msgs/String",            producer: C-OPC,  consumer: C-CRAB}
+  - {id: IF-MISCMD, name: "mission_cmd",     kind: ros_topic, type: "std_msgs/String",            producer: C-CRAB, consumer: C-CTRL}
+  - {id: IF-MISSTAT,name: "mission_status",  kind: ros_topic, type: "std_msgs/String",            producer: C-CTRL, consumer: C-CRAB}
+  - {id: IF-CFG,    name: "robot_config",    kind: ros_topic, type: "std_msgs/String (latched)",  producer: C-CRAB, consumer: C-CTRL}
+  - {id: IF-JCMD,   name: "joint_cmd",       kind: ros_topic, type: "std_msgs/Float32MultiArray", producer: C-CTRL, consumer: C-DXLIF}
+  - {id: IF-JFB,    name: "joint_feedback",  kind: ros_topic, type: "std_msgs/Float32MultiArray", producer: C-DXLIF, consumer: C-CTRL}
+  - {id: IF-IMU,    name: "imu_data",        kind: ros_topic, type: "sensor_msgs/Imu",            producer: C-IMUIF, consumer: C-CTRL}
+  - {id: IF-TAG,    name: "apriltag_detections", kind: ros_topic, type: "std_msgs/Float32MultiArray", producer: C-APRIL, consumer: C-CTRL}
+  - {id: IF-IMG,    name: "camera/image_raw", kind: ros_topic, type: "sensor_msgs/Image",         producer: C-CAMIF, consumer: C-APRIL}
+  - {id: IF-TLM,    name: "telemetry",       kind: ros_topic, type: "std_msgs/Float32MultiArray", producer: C-CTRL, consumer: C-OPC}
+  # physical
+  - {id: IF-RS485,  name: "servo bus (RS-485)", kind: physical, type: "RS-485 / U2D2 1 Mbaud",    producer: C-COMPUTE, consumer: C-SERVO}
+  - {id: IF-I2C,    name: "IMU bus (I2C)",   kind: physical, type: "I2C 0x69",                    producer: C-COMPUTE, consumer: C-IMU}
+  - {id: IF-USB,    name: "camera (USB)",    kind: physical, type: "USB UVC",                     producer: C-CAM,  consumer: C-COMPUTE}
