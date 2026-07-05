@@ -18,15 +18,23 @@ operating mode, rates, and nominal gait all live on the crab node here and are
 broadcast once at startup.  Per-DOF servo settings unique to the hardware
 (port, baudrate, servo PID gains) stay on the servo_actuator node.
 
-Actuator map entry: [id, homing_offset, set_id, min_limit, max_limit, custom?]
+Actuator map entry: [id, set_id, custom?]
   id                      — Dynamixel servo id
-  homing_offset           — rad written to the servo's Homing Offset register by
-                            the hardware node so it reads 0 at mechanical home
   set_id                  — servos sharing a set form one fin; within a set the
                             FIRST entry is roll, the SECOND is pitch
-  min_limit, max_limit    — mechanical position limits (rad)
   custom (optional)       — spare per-servo value passed through for a
                             motion_command function (unused for now)
+
+Position limits are fixed by role in the controller (roll 0..2π, pitch 0..π),
+not carried in the actuator map.
+
+Homing is calibrated once on the servo itself (e.g. via Dynamixel Wizard) and
+NEVER touched by this stack — no node here reads or writes the Homing Offset
+register; Present Position 0 is always trusted as home.
+
+Init sequence: crab drives home_state (all servos → 0), waits
+operational_readiness seconds, then standby (mid-range rest pose), before any
+mission_input is processed.
 
 Missions are fed at runtime on the /mission_input topic — see
 scripts/feed_missions.sh.
@@ -86,12 +94,14 @@ def generate_launch_description():
             name='crab_mission_dispatcher',
             output='screen',
             parameters=[{
-                # One fin: servo 4 = roll (±180°) first, servo 3 = pitch (±90°) second
-                'actuator_map': '[[4, 0.0, 1, -3.14, 3.14], '
-                                '[3, 0.0, 1, -1.57, 1.57]]',
+                'actuator_map': '[[1, 1], '
+                                '[2, 1], '
+                                '[3, 2], '
+                                '[4, 2]]',
                 'operating_mode': 'position',   # 'position' or 'velocity'
                 'control_rate': 400.0,          # Hz — must match controller
-                'startup_delay': 10.0,          # s — deployment settling before motion
+                'operational_readiness': 2.0,  # s — wait after home_state before standby
+                'mission_readiness': 5.0,       # s — wait after standby before missions run
                 'gait_velocity': 3.77,          # rad/s — nominal peak stroke rate (2π·f·A)
                 'gait_effort': 0.6,             # rad — nominal stroke amplitude
                 'default_retries': 2,           # auto-retries before asking a human
@@ -150,13 +160,21 @@ def generate_launch_description():
                 'port':       '/dev/ttyUSB0',
                 'baudrate':   1000000,
                 'hardware_rate': 500.0,  # Hz - write/read cycle rate
-                'current_limit': 1200,
+                'current_limit': 1193,  # XW430-T200 max valid value (3.209 A)
 
                 'servo_position_p_gain': 800,
                 'servo_position_i_gain': 0,
                 'servo_position_d_gain': 0,
                 'servo_velocity_p_gain': 100,
                 'servo_velocity_i_gain': 1920,
+                # Slow, inspectable point-to-point moves for home_state/standby
+                # (raw register units, 0 = unlimited/instant — see interface).
+                # Acceleration matters as much as velocity here: a low value
+                # gives a long, slow deceleration tail near the target that's
+                # easy to mistake for "already done" well before it's
+                # actually within POSE_TOLERANCE.
+                'profile_velocity': 60,
+                'profile_acceleration': 20,
             }],
         ),
 

@@ -8,8 +8,12 @@ and writes them to the servos.
 Topics
 ------
 Subscribes : robot_config       (String, transient_local) from crab — read only
-                                 for per-servo homing offsets (written to the
-                                 Homing Offset register at setup).
+                                 for the servo id list, to auto-initialize
+                                 hardware as soon as config arrives.  Homing is
+                                 calibrated once on the servo itself (e.g. via
+                                 Dynamixel Wizard) and NEVER touched here —
+                                 this node never reads or writes the Homing
+                                 Offset register.
              joint_cmd          (Float32MultiArray) [ids.. modes.. vals..]
 Publishes  : joint_feedback     (Float32MultiArray) — control feedback, 6/servo:
                                  [id, mode, pos_rad, vel_rad_s, curr_A, volt_V]
@@ -65,7 +69,8 @@ class DynamixelXW430Interface(Node):
     # Control-table addresses (Protocol 2.0 / XW430-T200)
     ADDR_BAUD_RATE     = 8
     ADDR_OPERATING_MODE = 11
-    ADDR_HOMING_OFFSET = 20
+    ADDR_MAX_POSITION_LIMIT = 48   # EEPROM, 4 bytes — hard upper clamp (ticks)
+    ADDR_MIN_POSITION_LIMIT = 52   # EEPROM, 4 bytes — hard lower clamp (ticks)
     ADDR_CURRENT_LIMIT = 38
     ADDR_TORQUE_ENABLE = 64
     ADDR_VELOCITY_I_GAIN = 76
@@ -74,6 +79,8 @@ class DynamixelXW430Interface(Node):
     ADDR_POSITION_I_GAIN = 82
     ADDR_POSITION_P_GAIN = 84
     ADDR_HARDWARE_ERROR = 70
+    ADDR_PROFILE_ACCELERATION = 108
+    ADDR_PROFILE_VELOCITY = 112
     ADDR_GOAL_VELOCITY = 104
     ADDR_GOAL_POSITION = 116
     ADDR_PRESENT_DATA  = 126
@@ -84,6 +91,18 @@ class DynamixelXW430Interface(Node):
     HW_ERROR_DECIMATION = 50    # poll Hardware Error Status every Nth loop
 
     SERVO_DIAG_STRIDE = 13      # values per servo in servo_diagnostics
+
+    # Hard position clamps written to each servo's Min/Max Position Limit
+    # registers so it physically cannot be driven past its role's range,
+    # independent of (and as a backstop to) the controller's software clamp.
+    # Ticks: roll spans a full turn (0..2π → 0..4095), pitch a half turn
+    # (0..π → 0..2048).  first servo in a set = roll, second = pitch.
+    ROLL_TICK_LIMITS  = (0, 4095)
+    PITCH_TICK_LIMITS = (0, 2048)
+    # Set 1 pitch uses the same positive range as set 2 — this hardware rejects
+    # a negative Min Position Limit in standard Position Control Mode, so the
+    # reversal isn't done via negative positions.
+    PITCH_TICK_LIMITS_SET1 = PITCH_TICK_LIMITS
 
     BAUD_MAP = {9600: 0, 57600: 1, 115200: 2, 1000000: 3, 2000000: 4, 3000000: 5, 4000000: 6, 4500000: 7}
     TICKS_PER_RAD    = 4096.0 / (2.0 * math.pi)
@@ -104,6 +123,12 @@ class DynamixelXW430Interface(Node):
         self.declare_parameter('servo_position_d_gain', 0)
         self.declare_parameter('servo_position_i_gain', 0)
         self.declare_parameter('servo_position_p_gain', 800)
+        # Caps Position Control Mode's point-to-point trajectory (raw register
+        # units, 0 = unlimited/max speed — that's the current "snap to target
+        # instantly" behaviour).  Small positive values make home_state/
+        # standby moves slow and visually inspectable.
+        self.declare_parameter('profile_velocity', 30)
+        self.declare_parameter('profile_acceleration', 10)
 
         port_name = self.get_parameter('port').value
         init_baud = self.get_parameter('baudrate').value
@@ -117,19 +142,25 @@ class DynamixelXW430Interface(Node):
         if not self.port.setBaudRate(init_baud):
             self.get_logger().fatal(f"Cannot set baudrate {init_baud}")
 
+        # Let the USB-serial adapter and bus settle before the first packet —
+        # writing immediately after openPort() is a common source of dropped
+        # first-packets (and therefore intermittently-missing torque enable).
+        time.sleep(0.25)
+
         self.current_baudrate = init_baud
         self.latest_command = None
         self.active_ids = []
         self.id_modes = {}
-        self.homing_offsets = {}      # sid -> homing offset (rad), from robot_config
+        self.position_tick_limits = {}   # sid -> (min_tick, max_tick), from robot_config
         self.is_configured = False
         self.is_configuring = False
         self.pos_sync_writer = None
         self.vel_sync_writer = None
 
-        # crab broadcasts the actuator map on a latched topic; we read it only for
-        # the per-servo homing offsets, written to each servo's Homing Offset
-        # register at setup so the servo itself reads 0 at mechanical home.
+        # crab broadcasts the actuator map on a latched topic; we read it only
+        # for the servo id list, to auto-initialize hardware as soon as config
+        # arrives.  Homing is calibrated once on the servo itself (e.g. via
+        # Dynamixel Wizard) — this node never reads or writes that register.
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                              history=HistoryPolicy.KEEP_LAST)
         self.config_sub = self.create_subscription(
@@ -152,21 +183,49 @@ class DynamixelXW430Interface(Node):
         self.get_logger().info(f"DynamixelXW430Interface online — port={port_name} baud={init_baud} hw_rate={hw_rate} Hz")
 
     def _config_cb(self, msg: String):
-        """Read per-servo homing offsets (rad) from crab's actuator map."""
+        """
+        Read the actuator map from crab and auto-initialize hardware (torque
+        on, gains) as soon as config arrives — don't wait for the first
+        mission's joint_cmd to bring the servos up.  Homing Offset is never
+        touched: it's calibrated once on the servo itself and this node just
+        trusts whatever Present Position 0 already means to the hardware.
+        """
         try:
             cfg = json.loads(msg.data)
         except json.JSONDecodeError as e:
             self.get_logger().error(f"Bad robot_config JSON: {e}")
             return
-        offsets = {}
+
+        ids = []
+        sets = {}   # set_id -> [sid, ...] in map order (1st = roll, 2nd = pitch)
         for entry in cfg.get('actuator_map', []):
             try:
-                offsets[int(round(entry[0]))] = float(entry[1])
+                sid = int(round(entry[0]))
+                set_id = int(round(entry[1]))
             except (IndexError, ValueError, TypeError):
                 continue
-        self.homing_offsets = offsets
-        self.get_logger().info(
-            f"Homing offsets received for servos {sorted(self.homing_offsets)}.")
+            ids.append(sid)
+            sets.setdefault(set_id, []).append(sid)
+
+        # Per-servo hard position clamps by role: first in a set = roll, second
+        # = pitch.  Applied to the Min/Max Position Limit registers at setup so
+        # the servo hardware itself refuses any goal outside its range.  Set 1
+        # pitch is reversed (negative range) to mirror set 2.
+        self.position_tick_limits = {}
+        for set_id, members in sets.items():
+            for i, sid in enumerate(members):
+                if i == 1:   # pitch
+                    self.position_tick_limits[sid] = (
+                        self.PITCH_TICK_LIMITS_SET1 if set_id == 1 else self.PITCH_TICK_LIMITS)
+                else:        # roll
+                    self.position_tick_limits[sid] = self.ROLL_TICK_LIMITS
+
+        if self.is_configured or self.is_configuring or not ids:
+            return
+
+        mode_code = 1 if cfg.get('operating_mode') == 'velocity' else 3
+        self._setup_hardware(ids, [mode_code] * len(ids),
+                             self.get_parameter('baudrate').value)
 
     def _cmd_cb(self, msg: Float32MultiArray):
         try:
@@ -277,17 +336,42 @@ class DynamixelXW430Interface(Node):
         except Exception as e:
             self.get_logger().error(f"SyncRead error: {e}")
 
+    def _write_checked(self, write_fn, sid, addr, value, label, retries=3):
+        """
+        Write a register, retrying on comm failure/servo error instead of the
+        SDK default of silently moving on.  Returns True only once the servo's
+        status packet actually confirms the write.
+        """
+        ph = self.packet_handler
+        comm_result, error = None, None
+        for attempt in range(retries):
+            comm_result, error = write_fn(self.port, sid, addr, value)
+            if comm_result == COMM_SUCCESS and error == 0:
+                return True
+            time.sleep(0.01)
+        self.get_logger().error(
+            f"Servo {sid}: {label} write failed after {retries} attempts "
+            f"(comm={ph.getTxRxResult(comm_result)}, err={ph.getRxPacketError(error)}).")
+        return False
+
     def _setup_hardware(self, ids: list, modes: list, requested_baud: int):
         self.is_configuring = True
         self.get_logger().info(f"Configuring hardware: ids={ids} modes={modes} baud={requested_baud}")
 
         ph = self.packet_handler
-        port = self.port
 
-        # Torque OFF
+        # Torque OFF — blind best-effort sweep over the full id range to clear
+        # any leftover state; most of these ids won't physically exist so
+        # failures here are expected and not logged.
         for sid in range(1, 11):
-            ph.write1ByteTxRx(port, sid, self.ADDR_TORQUE_ENABLE, 0)
+            ph.write1ByteTxRx(self.port, sid, self.ADDR_TORQUE_ENABLE, 0)
             time.sleep(0.005)
+
+        # Torque OFF (checked) for the servos we actually care about — Operating
+        # Mode is an EEPROM register that silently fails to change while torque
+        # is enabled, so this must be confirmed before writing the mode below.
+        for sid in ids:
+            self._write_checked(ph.write1ByteTxRx, sid, self.ADDR_TORQUE_ENABLE, 0, "torque-off")
 
         # Get parameters
         current_limit = self.get_parameter('current_limit').value
@@ -296,41 +380,67 @@ class DynamixelXW430Interface(Node):
         pos_d = self.get_parameter('servo_position_d_gain').value
         pos_i = self.get_parameter('servo_position_i_gain').value
         pos_p = self.get_parameter('servo_position_p_gain').value
-        
+        profile_vel = self.get_parameter('profile_velocity').value
+        profile_accel = self.get_parameter('profile_acceleration').value
+
         for i, sid in enumerate(ids):
             mode = modes[i]
 
             if mode in (0, 1, 3):
-                ph.write1ByteTxRx(port, sid, self.ADDR_OPERATING_MODE, mode)
+                self._write_checked(ph.write1ByteTxRx, sid, self.ADDR_OPERATING_MODE, mode, "operating-mode")
 
-            # Homing offset (rad -> signed ticks) so the servo reads 0 at home.
-            offset_rad = self.homing_offsets.get(sid, 0.0)
-            offset_ticks = ctypes.c_uint32(
-                int(round(offset_rad * self.TICKS_PER_RAD))).value
-            ph.write4ByteTxRx(port, sid, self.ADDR_HOMING_OFFSET, offset_ticks)
+            # Homing Offset is never read or written here — it's calibrated
+            # once on the servo itself (e.g. via Dynamixel Wizard) and this
+            # node always trusts whatever Present Position 0 already means.
 
-            ph.write2ByteTxRx(port, sid, self.ADDR_CURRENT_LIMIT, current_limit)
-            ph.write2ByteTxRx(port, sid, self.ADDR_VELOCITY_I_GAIN, vel_i)
-            ph.write2ByteTxRx(port, sid, self.ADDR_VELOCITY_P_GAIN, vel_p)
-            ph.write2ByteTxRx(port, sid, self.ADDR_POSITION_D_GAIN, pos_d)
-            ph.write2ByteTxRx(port, sid, self.ADDR_POSITION_I_GAIN, pos_i)
-            ph.write2ByteTxRx(port, sid, self.ADDR_POSITION_P_GAIN, pos_p)
+            # Hard position clamps (EEPROM, so written here while torque is
+            # off): the servo hardware itself will refuse any goal outside
+            # [min, max], a backstop to the controller's software clamp.
+            # A negative limit (set 1 reversed pitch) is written as its
+            # 32-bit two's-complement; standard Position Control Mode may
+            # reject it — the checked write will log that if so.
+            min_tick, max_tick = self.position_tick_limits.get(sid, (0, 4095))
+            self._write_checked(ph.write4ByteTxRx, sid, self.ADDR_MAX_POSITION_LIMIT,
+                                ctypes.c_uint32(max_tick).value, "max-position-limit")
+            self._write_checked(ph.write4ByteTxRx, sid, self.ADDR_MIN_POSITION_LIMIT,
+                                ctypes.c_uint32(min_tick).value, "min-position-limit")
+
+            self._write_checked(ph.write2ByteTxRx, sid, self.ADDR_CURRENT_LIMIT, current_limit, "current-limit")
+            self._write_checked(ph.write2ByteTxRx, sid, self.ADDR_VELOCITY_I_GAIN, vel_i, "velocity-i-gain")
+            self._write_checked(ph.write2ByteTxRx, sid, self.ADDR_VELOCITY_P_GAIN, vel_p, "velocity-p-gain")
+            self._write_checked(ph.write2ByteTxRx, sid, self.ADDR_POSITION_D_GAIN, pos_d, "position-d-gain")
+            self._write_checked(ph.write2ByteTxRx, sid, self.ADDR_POSITION_I_GAIN, pos_i, "position-i-gain")
+            self._write_checked(ph.write2ByteTxRx, sid, self.ADDR_POSITION_P_GAIN, pos_p, "position-p-gain")
+            # Slows down Position Control Mode point-to-point moves (home_state
+            # / standby) so motion is slow and visually inspectable instead of
+            # snapping instantly to the goal.
+            self._write_checked(ph.write4ByteTxRx, sid, self.ADDR_PROFILE_VELOCITY, profile_vel, "profile-velocity")
+            self._write_checked(ph.write4ByteTxRx, sid, self.ADDR_PROFILE_ACCELERATION, profile_accel, "profile-acceleration")
 
             self.id_modes[sid] = mode
             time.sleep(0.005)
 
-        # Torque ON
+        # Torque ON (checked) — track failures so a dropped packet is loud
+        # instead of a servo silently staying limp.
+        torque_failed = []
         for i, sid in enumerate(ids):
             if modes[i] != -1:
-                ph.write1ByteTxRx(port, sid, self.ADDR_TORQUE_ENABLE, 1)
+                if not self._write_checked(ph.write1ByteTxRx, sid, self.ADDR_TORQUE_ENABLE, 1, "torque-on"):
+                    torque_failed.append(sid)
                 time.sleep(0.005)
 
+        if torque_failed:
+            self.get_logger().error(
+                f"Torque FAILED to enable on servos {torque_failed} — they are limp.")
+        else:
+            self.get_logger().info(f"Torque enabled on all servos {ids}.")
+
         # Rebuild sync handlers
-        self.pos_sync_writer = GroupSyncWrite(port, ph, self.ADDR_GOAL_POSITION, 4)
-        self.vel_sync_writer = GroupSyncWrite(port, ph, self.ADDR_GOAL_VELOCITY, 4)
+        self.pos_sync_writer = GroupSyncWrite(self.port, ph, self.ADDR_GOAL_POSITION, 4)
+        self.vel_sync_writer = GroupSyncWrite(self.port, ph, self.ADDR_GOAL_VELOCITY, 4)
         self.feedback_read_sync = GroupSyncRead(
-            port, ph, self.PRESENT_BLOCK_START, self.PRESENT_BLOCK_LEN)
-        self.hw_error_read = GroupSyncRead(port, ph, self.ADDR_HARDWARE_ERROR, 1)
+            self.port, ph, self.PRESENT_BLOCK_START, self.PRESENT_BLOCK_LEN)
+        self.hw_error_read = GroupSyncRead(self.port, ph, self.ADDR_HARDWARE_ERROR, 1)
 
         for sid in ids:
             self.feedback_read_sync.addParam(sid)

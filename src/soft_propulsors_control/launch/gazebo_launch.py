@@ -112,13 +112,14 @@ def generate_launch_description():
             parameters=[{
                 # Within each set, roll first then pitch (positional convention):
                 #   set 1 = left  (2 roll, 1 pitch), set 2 = right (4 roll, 3 pitch)
-                'actuator_map': '[[2, 0.0, 1, -3.14, 3.14], '
-                                '[1, 0.0, 1, -1.57, 1.57], '
-                                '[4, 0.0, 2, -3.14, 3.14], '
-                                '[3, 0.0, 2, -1.57, 1.57]]',
+                'actuator_map': '[[2, 1], '
+                                '[1, 1], '
+                                '[4, 2], '
+                                '[3, 2]]',
                 'operating_mode': 'position',
                 'control_rate': 400.0,
-                'startup_delay': 10.0,
+                'operational_readiness': 10.0,  # s — wait after home_state before standby
+                'mission_readiness': 5.0,       # s — wait after standby before missions run
                 'gait_velocity': 3.77,
                 'gait_effort': 0.6,
                 'default_retries': 2,

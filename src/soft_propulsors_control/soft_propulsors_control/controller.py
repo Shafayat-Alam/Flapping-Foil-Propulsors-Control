@@ -14,8 +14,10 @@ Division of responsibility
 
 State machine
 -------------
-  BOOT      counting down ``startup_delay`` s from launch (deployment settling)
   WAIT      configured but no active mission yet
+  HOME_STATE  driving every servo to its homed zero (0 rad) — first init step
+  STANDBY   driving to the mid-range rest pose (roll π, pitch π/2) — second init
+            step, and available on demand afterward
   SCANNING  searching for the mission's tag(s) — sweeps one body axis at a time
   LOCKING   tag(s) first seen; confirming a stable detection before committing
   HEADING   actively swimming toward the heading (flap only; differential to turn)
@@ -62,6 +64,28 @@ from soft_propulsors_control import motion_command as mc
 # Mode codes shared with the hardware interface
 MODE_POSITION = 3.0
 MODE_VELOCITY = 1.0
+
+# Per-role position ranges (rad).  Homing is calibrated once on the servo so
+# that its calibrated zero (0 rad) sits at the bottom of the range; the range
+# then spans a full sweep, with the STANDBY rest pose at the midpoint.
+#   roll  : 0 .. 2π   (rest = π,   i.e. mid-range; ±π of travel each way)
+#   pitch : 0 .. π    (rest = π/2, i.e. mid-range; ±π/2 of travel each way)
+ROLL_LIMIT = (0.0, 2.0 * math.pi)
+PITCH_LIMIT = (0.0, math.pi)
+STANDBY_ROLL = math.pi
+STANDBY_PITCH = math.pi / 2.0
+
+# Set 1 (right) and set 2 (left) use the SAME positive ranges/targets on both
+# axes.  Reversing set 1 pitch to -π/2 was tried but this hardware rejects
+# negative goal positions in standard Position Control Mode (the negative Min
+# Position Limit write fails "data value out of range"), so both pitch servos
+# stay at +π/2.  If set 1 pitch ever needs to be physically opposite, do it via
+# the servo's Drive Mode (Reverse) in Wizard + re-home, keeping the command
+# positive — not via negative software targets.
+SET1_ROLL_LIMIT = ROLL_LIMIT
+SET1_PITCH_LIMIT = PITCH_LIMIT
+STANDBY_ROLL_SET1 = STANDBY_ROLL
+STANDBY_PITCH_SET1 = STANDBY_PITCH
 
 # Heading vocabulary.  Cardinals point at their own tag; intercardinals are the
 # bisector of two adjacent cardinal tags (both must be in view to compute one).
@@ -128,10 +152,14 @@ class Controller(Node):
 
     # ---- Behaviour tuning (robot-agnostic defaults; refine on hardware) ----
     STABLE_FRAMES = 5          # consecutive valid detections to lock a tag
-    ARRIVE_DISTANCE = 0.30     # m — within this of the tag = mission achieved
+    ARRIVE_DISTANCE = 0.16     # m — within this of the tag = mission achieved
     ALIGN_BEARING = 0.10       # rad — bearing considered "aligned"
     TURN_BEARING = 0.30        # rad — above this we paddle to turn, else flap to cruise
     STUCK_WINDOW = 6.0         # s — progress must rise within this window
+    POSE_TOLERANCE = 0.05     # rad — a servo counts as "arrived" within this of target
+    # No POSE_TIMEOUT: HOME_STATE/STANDBY completion is decided purely by
+    # encoder feedback (_pose_settled), so a slow move can never trip a false
+    # STUCK.  The controller keeps commanding and waits as long as it takes.
     STATUS_PERIOD = 0.2        # s — minimum spacing between status publishes (5 Hz)
     SCAN_AXIS_PERIOD = 8.0     # s — time spent sweeping each axis before rotating axes
     SCAN_RATE = 0.15           # Hz — slow sweep frequency while scanning
@@ -154,7 +182,6 @@ class Controller(Node):
         self.declare_parameter('gait_velocity', 3.77)  # nominal peak stroke rate (rad/s, 2π·f·A)
         self.declare_parameter('gait_effort', 0.6)     # nominal stroke amplitude (rad)
         self.declare_parameter('max_freq', 3.0)        # Hz — cap when deriving freq from velocity
-        self.declare_parameter('startup_delay', 10.0)  # fallback; crab config wins
         self.declare_parameter('manual_timeout', 30.0) # s — deadman for manual_cmd; 0 = off
 
         self.kp = self.get_parameter('kp').value
@@ -167,7 +194,6 @@ class Controller(Node):
         self.nominal_velocity = self.get_parameter('gait_velocity').value
         self.nominal_effort = self.get_parameter('gait_effort').value
         self.max_freq = self.get_parameter('max_freq').value
-        self.startup_delay = self.get_parameter('startup_delay').value
         self.manual_timeout = self.get_parameter('manual_timeout').value
         # Active stroke for the current mission (set when a mission is applied).
         self.cur_freq, self.cur_amp = self._resolve_gait(None)
@@ -211,11 +237,17 @@ class Controller(Node):
         # ------------------------------------------------------------------
         # Mission + state machine
         # ------------------------------------------------------------------
-        self.state = 'BOOT'
+        # Start idle in WAIT: hold neutral (attitude PID, gains 0 by default)
+        # and do nothing until crab dispatches the first mission.  crab owns the
+        # init sequence now (home_state → wait → standby), so there's no built-in
+        # settling countdown here anymore.
+        self.state = 'WAIT'
         self.mission = None          # most recent mission dict from crab
         self._mission_dirty = False  # a new mission is waiting to be applied
         self.mission_seq = 0
-        self.mission_kind = 'hover'  # 'heading' | 'scan' | 'hover' | 'tag'
+        self.mission_kind = 'hover'  # 'heading' | 'scan' | 'hover' | 'tag' | 'home_state' | 'standby'
+        self.home_target_servo_id = None  # None = all servos; set = single-servo home_state (crab's per-servo walk)
+        self.standby_target_servo_id = None  # same, for standby
         self.required_tags = []      # tag ids that must all be in view to head
         self.arrive_distance = self.ARRIVE_DISTANCE  # per-mission arrival distance (m)
         self.target_bearing = 0.0    # commanded heading bearing (rad); 0 = straight ahead
@@ -233,6 +265,10 @@ class Controller(Node):
         self._scan_axis = 0          # 0=X,1=Y,2=Z body axis being swept
         self._scan_axis_t0 = self.t0
 
+        # Pose-move bookkeeping (shared by HOME_STATE and STANDBY)
+        self._pose_t0 = self.t0
+        self._pose_achieved = False   # ACHIEVED already fired for this pose instance?
+
         # Status throttle
         self._last_status_time = 0.0
         self._last_event = None
@@ -246,7 +282,11 @@ class Controller(Node):
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                              history=HistoryPolicy.KEEP_LAST)
         self.create_subscription(String, 'robot_config', self._config_cb, latched)
-        self.create_subscription(String, 'mission_cmd', self._mission_cb, 10)
+        # Must match crab's publisher QoS (TRANSIENT_LOCAL) — otherwise a
+        # mission_cmd published before this subscription exists is lost for
+        # good, which can silently stall the whole init sequence depending on
+        # which process happens to finish starting up first.
+        self.create_subscription(String, 'mission_cmd', self._mission_cb, latched)
         self.create_subscription(String, 'manual_cmd', self._manual_cb, 10)
         self.create_subscription(Float32MultiArray, 'joint_feedback', self._feedback_cb, 1)
         self.create_subscription(Imu, 'imu_data', self._imu_cb, 10)
@@ -254,14 +294,19 @@ class Controller(Node):
                                  self._apriltag_cb, 10)
 
         self.cmd_pub = self.create_publisher(Float32MultiArray, 'joint_cmd', 1)
-        self.status_pub = self.create_publisher(String, 'mission_status', 10)
+        # TRANSIENT_LOCAL for the same reason as mission_cmd: if this
+        # publishes ACHIEVED before crab's subscription is up, a volatile
+        # topic would lose it for good.  No downside for a late-connecting
+        # subscriber on an ongoing status stream — it just gets the latest
+        # cached message immediately instead of waiting for the next one.
+        self.status_pub = self.create_publisher(String, 'mission_status', latched)
         self.telem_pub = self.create_publisher(Float32MultiArray, 'telemetry', 10)
 
         self.create_timer(1.0 / self.control_rate, self._control_loop)
 
         self.get_logger().info(
             f"Controller up — awaiting robot_config. "
-            f"control_rate={self.control_rate} Hz, startup_delay={self.startup_delay}s."
+            f"control_rate={self.control_rate} Hz."
         )
 
     # ======================================================================
@@ -278,7 +323,6 @@ class Controller(Node):
 
         self.operating_mode = cfg.get('operating_mode', 'position')
         self.control_rate = cfg.get('control_rate', self.control_rate)
-        self.startup_delay = cfg.get('startup_delay', self.startup_delay)
         self.nominal_velocity = cfg.get('gait_velocity', self.nominal_velocity)
         self.nominal_effort = cfg.get('gait_effort', self.nominal_effort)
         self.cur_freq, self.cur_amp = self._resolve_gait(self.mission)
@@ -296,25 +340,29 @@ class Controller(Node):
         """
         Turn the actuator map into servo tables and fin (roll/pitch) pairs.
 
-        Entry format: [id, homing_offset, set_id, min, max, custom?]
-          homing_offset is written to the servo by the hardware node (the
-          controller does not apply it).  Within each set the FIRST entry is the
+        Entry format: [id, set_id, custom?]
+          Homing is calibrated once on the servo itself (e.g. via Dynamixel
+          Wizard) and never touched by this stack — Present Position 0 is
+          always trusted as home.  Within each set the FIRST entry is the
           roll servo and the SECOND is the pitch servo — order is the source of
           truth for role, so only the gaits need to care which is which.
           custom (optional) is a spare per-servo value, stored and passed through.
+
+        Position limits are NOT read from the map — they're fixed by role and
+        set: set 2 roll/pitch get ROLL_LIMIT (0..2π) / PITCH_LIMIT (0..π);
+        set 1 (mirror-mounted) gets the reversed ranges, ROLL_LIMIT_REVERSED
+        (-2π..0) / PITCH_LIMIT_REVERSED (-π..0), assigned once the roll/pitch
+        pairing is known.
         """
         self.all_ids, self.limits, self.custom, self.fins = [], {}, {}, []
         sets = {}   # set_id -> list of sid, in map order (1st = roll, 2nd = pitch)
 
         for entry in actuator_map:
             sid = float(entry[0])
-            set_id = int(entry[2])
-            lo = float(entry[3]) if len(entry) > 3 else -3.14
-            hi = float(entry[4]) if len(entry) > 4 else 3.14
-            custom = float(entry[5]) if len(entry) > 5 else None
+            set_id = int(entry[1])
+            custom = float(entry[2]) if len(entry) > 2 else None
 
             self.all_ids.append(sid)
-            self.limits[sid] = (lo, hi)
             if custom is not None:
                 self.custom[sid] = custom
             sets.setdefault(set_id, []).append(sid)
@@ -329,6 +377,16 @@ class Controller(Node):
                 continue
             roll_id, pitch_id = members[0], members[1]   # positional convention
             self.fins.append(Fin(set_id, roll_id, pitch_id))
+            # Limits are fixed by role/set, not read from the map.  Both sets
+            # currently use the same positive ranges (set 1's are aliased to
+            # the normal ones — see the SET1_* constants); the software clamp
+            # in _command_targets enforces them.
+            if set_id == 1:
+                self.limits[roll_id] = SET1_ROLL_LIMIT
+                self.limits[pitch_id] = SET1_PITCH_LIMIT
+            else:
+                self.limits[roll_id] = ROLL_LIMIT
+                self.limits[pitch_id] = PITCH_LIMIT
 
         # Initialise feedback bookkeeping
         for sid in self.all_ids:
@@ -374,6 +432,36 @@ class Controller(Node):
             self.required_tags = []
             self._enter('HOVERING', event='ALL_MISSIONS_DONE')
             self.get_logger().info(f"Mission '{label}': hover / idle.")
+            return
+
+        if kind == 'home_state':
+            self.required_tags = []
+            self.home_target_servo_id = m.get('target_servo_id')  # None = all servos
+            # Force-reset pose bookkeeping explicitly: _enter only resets it
+            # on an actual state transition, but crab's per-servo home_state
+            # walk can dispatch several home_state missions in a row without
+            # ever leaving HOME_STATE, so each new mission needs a fresh
+            # achieved/timeout state regardless of whether the state changed.
+            self._pose_achieved = False
+            self._pose_t0 = self.get_clock().now().nanoseconds / 1e9
+            self._enter('HOME_STATE', event='MISSION_BEGIN')
+            target_desc = (f"servo {self.home_target_servo_id}"
+                           if self.home_target_servo_id is not None else "all servos")
+            self.get_logger().info(f"Mission '{label}': home_state — driving {target_desc} to 0.")
+            return
+
+        if kind == 'standby':
+            self.required_tags = []
+            self.standby_target_servo_id = m.get('target_servo_id')  # None = all servos
+            # Force-reset pose bookkeeping explicitly — same reasoning as
+            # home_state: crab's per-servo standby walk can dispatch several
+            # standby missions in a row without ever leaving STANDBY.
+            self._pose_achieved = False
+            self._pose_t0 = self.get_clock().now().nanoseconds / 1e9
+            self._enter('STANDBY', event='MISSION_BEGIN')
+            target_desc = (f"servo {self.standby_target_servo_id}"
+                           if self.standby_target_servo_id is not None else "all servos")
+            self.get_logger().info(f"Mission '{label}': standby — driving {target_desc} to rest pose.")
             return
 
         self._reset_heading()
@@ -511,21 +599,27 @@ class Controller(Node):
                 self._do_manual(now)
             return
 
-        # Deployment settling countdown — nothing starts until it elapses
-        if self.state == 'BOOT':
-            if (now - self.t0) >= self.startup_delay:
-                self._enter('WAIT', event='READY')
-            else:
-                self._command_hover()
-                return
-
-        # Apply a mission that arrived (possibly during BOOT) now that we're past it
+        # Apply a mission as soon as one arrives — crab owns all timing/settling.
         if self._mission_dirty:
             self._apply_pending_mission()
+
+        # Before crab's very first mission ever arrives, stay fully idle —
+        # command nothing at all, rather than defaulting to WAIT's hover
+        # behaviour, which would drive every servo to neutral simultaneously.
+        # That matters for the interactive per-servo home_state/standby walk:
+        # crab controls strictly one servo at a time, and this is the window
+        # (after torque enables, before the first dispatch) where an active
+        # hover would otherwise move every servo at once, defeating that.
+        if self.mission is None:
+            return
 
         t = now
         if self.state == 'WAIT':
             self._command_hover()
+        elif self.state == 'HOME_STATE':
+            self._do_home_state(t)
+        elif self.state == 'STANDBY':
+            self._do_standby(t)
         elif self.state == 'SCANNING':
             self._do_scanning(t)
         elif self.state == 'LOCKING':
@@ -538,6 +632,103 @@ class Controller(Node):
         self._publish_status()
 
     # ---- States ----------------------------------------------------------
+
+    def _home_targets(self, target_servo_id=None):
+        """
+        Target servo(s) → 0 rad (the calibrated homed position).
+        target_servo_id restricts to just that one servo (used by crab's
+        interactive per-servo home_state walk); omitted/None targets every
+        servo (full home_state, e.g. sent on demand via mission_input).
+        """
+        if target_servo_id is not None:
+            return {target_servo_id: 0.0}
+        return {sid: 0.0 for sid in self.all_ids}
+
+    def _standby_targets(self, target_servo_id=None):
+        """
+        Mid-range rest pose for every fin: roll → π, pitch → π/2.  Both sets
+        use the same positive targets (set 1's are aliased via STANDBY_*_SET1);
+        set 1 being mirror-mounted, the identical command lands it in the
+        physically mirrored pose.  target_servo_id restricts to just that one
+        servo (used by crab's interactive per-servo standby walk); omitted/None
+        targets every servo (full standby, e.g. sent on demand via
+        mission_input).
+        """
+        pose = {}
+        for fin in self.fins:
+            if fin.set_id == 1:
+                pose[fin.roll_id] = STANDBY_ROLL_SET1
+                pose[fin.pitch_id] = STANDBY_PITCH_SET1
+            else:
+                pose[fin.roll_id] = STANDBY_ROLL
+                pose[fin.pitch_id] = STANDBY_PITCH
+        if target_servo_id is not None:
+            return {target_servo_id: pose[target_servo_id]} if target_servo_id in pose else {}
+        return pose
+
+    def _do_home_state(self, t):
+        """
+        Drive the target servo(s) to literal zero (the calibrated homed
+        position) — crab.home_target_servo_id restricts this to one servo at
+        a time for the interactive per-servo walk; None means every servo
+        (on-demand full home_state).  Open-loop command, closed-loop
+        completion: no attitude PID, and we don't declare ACHIEVED until
+        joint_feedback confirms the target(s) settled near zero.  There is no
+        STUCK/timeout path — a servo that never gets there just keeps being
+        commanded; the operator sees it not moving and intervenes.
+
+        Unlike heading/scan, this is a static pose hold: once ACHIEVED, we
+        stop re-sending joint_cmd entirely and stay in HOME_STATE — we do NOT
+        fall back to WAIT, since WAIT's idle behaviour is the attitude-hold
+        hover, which would immediately drive the servo(s) away from the
+        position just reached.  Only left when crab dispatches a new mission.
+
+        Completion is decided PURELY by encoder feedback (_pose_settled) — no
+        timeout.  We keep commanding and wait as long as it takes for the
+        servo to actually reach its target; a slow move (low profile velocity)
+        can't trip a false STUCK.
+        """
+        if self._pose_achieved:
+            return
+
+        targets = self._home_targets(self.home_target_servo_id)
+        self._command_targets(targets, only_named=self.home_target_servo_id is not None)
+        if self._pose_settled(targets):
+            self._pose_achieved = True
+            self._enter(self.state, event='ACHIEVED')   # notify crab, stay put
+
+    def _do_standby(self, t):
+        """
+        Drive the target servo(s) to the mid-range rest pose — crab's
+        standby_target_servo_id restricts this to one servo at a time for the
+        interactive per-servo walk; None means every servo (on-demand full
+        standby).  Same static-pose-hold contract as HOME_STATE: stops
+        re-sending joint_cmd once ACHIEVED (servo holds via its own onboard
+        PID, torque stays on) and stays in STANDBY instead of falling back to
+        WAIT/hover.  Only left when crab dispatches a new mission.
+
+        Completion is decided PURELY by encoder feedback (_pose_settled) — no
+        timeout; a slow move can't trip a false STUCK.
+        """
+        if self._pose_achieved:
+            return
+
+        targets = self._standby_targets(self.standby_target_servo_id)
+        self._command_targets(targets, only_named=self.standby_target_servo_id is not None)
+        if self._pose_settled(targets):
+            self._pose_achieved = True
+            self._enter(self.state, event='ACHIEVED')   # notify crab, stay put
+
+    def _pose_settled(self, targets):
+        """True once every targeted servo reports real feedback within tolerance of its target."""
+        if not targets:
+            return False
+        for sid, tgt in targets.items():
+            if sid not in self.last_pos_time:
+                return False   # no real feedback received yet — not a default
+            if abs(self.feedback[sid]['pos'] - tgt) > self.POSE_TOLERANCE:
+                return False
+        return True
 
     def _do_scanning(self, t):
         """
@@ -792,11 +983,25 @@ class Controller(Node):
             targets.update(mc.drive(fin.pitch_id, pitch_cmd))
         self._command_targets(targets)
 
-    def _command_targets(self, targets: dict):
+    def _command_targets(self, targets: dict, only_named: bool = False):
         """
-        Apply limits to a {servo_id: value} map and publish joint_cmd.  Servos
-        not named in ``targets`` are held at neutral (0.0 = the homed zero; the
-        hardware node owns the homing offset, so the controller adds nothing).
+        Apply limits to a {servo_id: value} map and publish joint_cmd.
+
+        By default, servos not named in ``targets`` are held at neutral (0.0
+        = the servo's own Homing Offset zero) — what most missions want (e.g.
+        a fin-only gait leaving other axes at rest).  Pass only_named=True to
+        instead touch *only* the servos in ``targets`` and leave every other
+        servo's command completely untouched this cycle (not even defaulted
+        to 0.0) — used by the interactive per-servo home_state/standby walk,
+        so targeting one servo never implicitly moves any other.
+
+        Position-mode servos already sitting within POSE_TOLERANCE of their
+        computed target are dropped from the outgoing command entirely — a
+        global "don't re-send a position we're already at" rule.  Torque
+        stays on and the servo holds where it is via its own onboard PID, so
+        omitting it from this cycle's packet is safe; this just avoids
+        redundant bus writes/jitter for a servo that was never asked to move.
+        Velocity-mode servos are exempt (rates aren't "arrived at and held").
         """
         if not self.all_ids:
             return
@@ -805,13 +1010,19 @@ class Controller(Node):
         else:
             mode_code = MODE_POSITION
 
+        servo_ids = list(targets.keys()) if only_named else self.all_ids
+
         ids, modes, values = [], [], []
-        for sid in self.all_ids:
+        for sid in servo_ids:
             raw = targets.get(sid, 0.0)
             if mode_code == MODE_POSITION:
                 # Position targets are relative to the servo's homed zero
                 lo, hi = self.limits.get(sid, (-3.14, 3.14))
                 val = max(lo, min(hi, raw))
+                current = self.feedback.get(sid, {}).get('pos')
+                if (sid in self.last_pos_time and current is not None
+                        and abs(current - val) <= self.POSE_TOLERANCE):
+                    continue   # already there — skip this servo this cycle
             else:
                 # Velocity targets are absolute rad/s
                 val = raw
@@ -819,6 +1030,8 @@ class Controller(Node):
             modes.append(mode_code)
             values.append(val)
 
+        if not ids:
+            return   # every targeted servo is already at its commanded position
         self._publish_cmd(ids, modes, values)
         self._buffer_telemetry(ids, modes, values)
 
@@ -846,6 +1059,9 @@ class Controller(Node):
             if new_state in ('WAIT', 'STUCK', 'HOVERING'):
                 self.roll_pid.reset()
                 self.pitch_pid.reset()
+            if new_state in ('HOME_STATE', 'STANDBY'):
+                self._pose_t0 = self.get_clock().now().nanoseconds / 1e9
+                self._pose_achieved = False
         self.state = new_state
         if event:
             self._last_event = event
