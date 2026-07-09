@@ -38,36 +38,40 @@ Mission intake format (one line on ``mission_input``)
 A mission is one of six kinds; the controller owns all sequencing (a heading
 mission scans for its own tag(s), then heads — crab never micro-commands it):
 
-    heading:<dir> velocity:<v> effort:<a> distance:<m> ...   swim a compass heading
-    scan ...                                                 sweep / search only
-    hover ...                                                hold station (IMU-stabilised)
-    home_state ...                                           drive every servo to 0 rad
-    standby ...                                              mid-range rest pose (roll π, pitch π/2)
-    tag:<id> ...                                             legacy single-tag seek
+    calibration ...                                          go to the zero/rest pose
+                                                             (arms IMU-follow; REQUIRED first —
+                                                             nothing else moves until it runs)
+    forward_paddle  / backward_paddle                        straight locomotion (paddle)
+    turn_left_paddle / turn_right_paddle                     pivot turns (paddle, differential)
+    forward_flap                                             straight locomotion (flap)
+    turn_left_flap  / turn_right_flap                        turns (flap; idle fin follows IMU)
+      ^ all take optional velocity:<v> effort:<a> (0..1)
+    drive id:<i,..> pos:<p,..> ...                           hold named servos at positions;
+                                                             other servos follow IMU
+    heading:<dir> velocity:<v> effort:<a> distance:<m> ...   swim a compass heading (tag-based)
+    scan / hover / tag:<id>                                  search / hold / legacy tag seek
+  crab forwards the kind verbatim; the controller interprets it.
 
-Init sequence (mandatory, runs before the queue):
-  home_state runs first, interactively, one servo at a time — sets in
-  ascending order, roll then pitch within each set.  For each servo: drive it
-  to 0, confirm via feedback, then print a y/n prompt (answer via
-  /operator_response — see "Answering y/n prompts" above) asking the operator
-  to visually confirm it.  "y" advances to the next servo; "n"
-  restarts the whole walk from the first servo (already-correct servos won't
-  actually move again, since a servo already at its commanded position is
-  never re-sent — see _command_targets).  Once every servo is confirmed, crab
-  waits ``operational_readiness`` seconds, dispatches ``standby``, waits
-  ``mission_readiness`` seconds, then begins processing mission_input.
-  Neither init mission can be preempted; anything sent early just queues
-  behind them.  ``home_state`` and ``standby`` can also be sent any time
-  afterward, on demand (home_state sent this way targets every servo at once,
-  not the interactive per-servo walk).
+Boot behaviour:
+  crab comes up operational and starts processing mission_input immediately —
+  there is no automatic init walk.  ``home_state`` and ``standby`` are sent as
+  ordinary mission commands when needed (sent this way each targets every
+  servo at once, not the interactive per-servo walk).
+
+  The interactive per-servo boot walk (home_state one servo at a time with a
+  y/n visual confirm per servo, then standby the same way, gated by
+  ``operational_readiness`` / ``mission_readiness``) is still implemented but
+  disabled — set ``init_phase`` back to 'home_state' in __init__ to restore
+  it (see _tick_init for how the standby leg is skipped in that walk).
 
   heading  (heading mission) one of N NE E SE S SW W NW.  Cardinals point at the
                       matching cardinal tag; intercardinals steer to the bisector
                       of the two adjacent cardinal tags (controller scans for both).
   distance (optional) arrival distance in metres — mission ACHIEVED when facing
                       the heading and within this of the reference tag
-  velocity (optional) peak stroke rate rad/s; falls back to nominal gait_velocity
-  effort   (optional) stroke amplitude rad; falls back to nominal gait_effort
+  velocity (optional) peak stroke rate rad/s (uncapped); falls back to gait_velocity
+  effort   (optional) amplitude as a fraction 0..1 of max travel (1 = swing to the
+                      position limits; >1 clamps); falls back to gait_effort
   label    (optional) human-readable name (used to match status)
   retries  (optional) auto-retries before asking a human, default 2
   override (optional) none    : queue at the back (default)
@@ -124,7 +128,7 @@ class CrabMissionDispatcher(Node):
             'actuator_map',
             '[[4, 1], [3, 1]]'
         )
-        self.declare_parameter('operating_mode', 'position')   # 'position' or 'velocity'
+        self.declare_parameter('operating_mode', 'extended_position')  # 'extended_position' | 'position' | 'velocity'
         self.declare_parameter('control_rate', 400.0)          # Hz
         # Seconds to wait, after home_state completes, before dispatching the
         # mandatory standby pose during the init sequence.
@@ -152,11 +156,14 @@ class CrabMissionDispatcher(Node):
         self.awaiting_human = False      # blocked on operator decision?
         self.human_deadline = 0.0        # monotonic-ish deadline for the prompt
         self.hovering = False            # already told controller to hover (idle)
-        # Mandatory init sequence, gated ahead of the real queue:
-        #   home_state → (wait operational_readiness s) → standby →
-        #   (wait mission_readiness s) → done
-        # Missions from mission_input queue up but aren't dispatched until 'done'.
-        self.init_phase = 'home_state'
+        # Init sequence disabled at boot: crab comes up operational and
+        # processes mission_input immediately.  home_state and standby are
+        # never run automatically — both are sent as ordinary mission
+        # commands when needed.  The interactive per-servo walk machinery
+        # below (_tick_init / _tick_home_state_walk / _tick_standby_walk) is
+        # left in place but never entered while init_phase starts at 'done';
+        # set this back to 'home_state' to restore the automatic boot walk.
+        self.init_phase = 'done'
         # 'home_state' | 'waiting_operational' | 'standby' | 'waiting_mission' | 'done'
         self.init_wait_deadline = None   # when the current wait phase ends (None = not started)
         self._init_dispatched = False    # current init mission has been sent (vs. not yet)
@@ -293,37 +300,45 @@ class CrabMissionDispatcher(Node):
 
     def _parse_mission(self, raw: str):
         """
-        Parse one mission line into (mission, override).  Supported forms:
-          heading:NE velocity:6 effort:0.6 distance:0.10   swim a compass heading
-          scan                                             sweep / search only
-          hover                                            hold station
-          tag:3                                            legacy single-tag seek
-        plus optional label:, retries:, override: on any of them.  The controller
-        owns all sequencing — a heading mission scans for its tag(s) itself.
+        Parse one mission line into (mission, override).
+
+        crab is deliberately DUMB about what a mission kind means — it just
+        forwards the directive (the ``kind`` string) plus generic knobs to the
+        controller, which owns ALL interpretation (gaits, direction, fin
+        selection, calibration).  So new kinds need no change here.
+
+        The kind is simply the first bare word on the line, e.g.:
+          calibration                                      go to the zero pose
+          forward_paddle / backward_paddle                 straight locomotion
+          turn_left_paddle / turn_right_flap               turning locomotion
+        A few legacy kinds instead carry their target in a token or need id/pos:
+          heading:NE / tag:3                               (tag-based)
+          drive id:1,3 pos:3.14                            (explicit positions)
+        Optional on any line: velocity:, effort:, distance:, label:, retries:,
+        override:.  The controller owns all sequencing.
         """
-        tokens, flags = {}, set()
+        tokens, flags, bare_order = {}, set(), []
         for part in raw.strip().split():
             if ':' in part:
                 k, v = part.split(':', 1)
                 tokens[k.lower()] = v
             else:
-                flags.add(part.lower())
+                p = part.lower()
+                flags.add(p)
+                bare_order.append(p)
 
         if 'heading' in tokens:
             kind = 'heading'
-        elif 'scan' in flags or tokens.get('kind') == 'scan':
-            kind = 'scan'
-        elif 'hover' in flags or tokens.get('kind') == 'hover':
-            kind = 'hover'
-        elif 'home_state' in flags or tokens.get('kind') == 'home_state':
-            kind = 'home_state'
-        elif 'standby' in flags or tokens.get('kind') == 'standby':
-            kind = 'standby'
         elif 'tag' in tokens:
             kind = 'tag'
+        elif 'drive' in flags and 'id' in tokens:
+            kind = 'drive'
+        elif tokens.get('kind'):
+            kind = tokens['kind']
+        elif bare_order:
+            kind = bare_order[0]         # forwarded verbatim; controller interprets
         else:
-            self.get_logger().error(
-                f"Mission line has no heading/scan/hover/home_state/standby/tag: {raw!r}")
+            self.get_logger().error(f"Mission line names no directive: {raw!r}")
             return None, None
 
         mission = {
@@ -345,11 +360,32 @@ class CrabMissionDispatcher(Node):
                 return None, None
             mission['target_tag_id'] = tag
             mission['label'] = tokens.get('label', f'tag{tag}')
-        else:   # scan / hover / home_state / standby
+        elif kind == 'drive':
+            # drive id:1,3 pos:3.14159[,...]  — one pos broadcasts to all ids,
+            # else counts must match.  Named servos are driven/held; every
+            # other servo follows the IMU (controller side).
+            try:
+                ids = [float(x) for x in tokens['id'].split(',')]
+                vals = [float(x) for x in tokens['pos'].split(',')]
+            except (KeyError, ValueError):
+                self.get_logger().error(f"drive needs numeric id: and pos: in: {raw!r}")
+                return None, None
+            if len(vals) == 1 and len(ids) > 1:
+                vals = vals * len(ids)
+            if len(vals) != len(ids):
+                self.get_logger().error(
+                    f"drive: {len(ids)} id(s) but {len(vals)} pos value(s) in: {raw!r}")
+                return None, None
+            mission['drive_ids'] = ids
+            mission['drive_positions'] = vals
+            mission['label'] = tokens.get('label', 'DRIVE')
+        else:   # scan / hover / flap / paddle / calibration
             mission['label'] = tokens.get('label', kind.upper())
 
-        # Optional per-mission stroke + arrival overrides; absent → nominal.
-        for key in ('velocity', 'effort', 'distance'):
+        # Optional per-mission stroke + arrival + duration knobs; absent →
+        # nominal (controller applies its own defaults, e.g. cycles = 1).
+        for key in ('velocity', 'effort', 'distance', 'periods', 'cycles',
+                    'roll_effort', 'pitch_effort', 'pitch_phase', 'pshift'):
             if key in tokens:
                 try:
                     mission[key] = float(tokens[key])
@@ -436,8 +472,10 @@ class CrabMissionDispatcher(Node):
         Drive the mandatory init sequence:
             home_state (interactive, per-servo, y/n-confirmed) →
             (wait operational_readiness s) →
-            standby (interactive, per-servo, y/n-confirmed) →
             (wait mission_readiness s) → done
+        standby is intentionally skipped here — the 'standby' phase and
+        _tick_standby_walk are left in place but unreached; standby is sent
+        as an ordinary mission command when needed instead.
         Each init mission runs through the normal STUCK/retry/human path; we
         advance only once ``current`` clears (ACHIEVED, or abandoned by the
         operator).  ``_init_dispatched`` distinguishes "not sent yet" from
@@ -455,12 +493,19 @@ class CrabMissionDispatcher(Node):
                 self.init_wait_deadline = now + self.operational_readiness
                 self.get_logger().info(
                     f"Init: waiting {self.operational_readiness:.1f}s "
-                    f"(operational_readiness) before standby.")
+                    f"(operational_readiness).")
             elif now >= self.init_wait_deadline:
-                self.init_phase = 'standby'
+                # standby walk disabled — go straight into the second readiness
+                # wait instead of dispatching standby (see _tick_standby_walk,
+                # left in place but unused while this transition skips it).
+                self.init_phase = 'waiting_mission'
+                self.init_wait_deadline = now + self.mission_readiness
+                self.get_logger().info(
+                    f"Init: waiting {self.mission_readiness:.1f}s "
+                    f"(mission_readiness) before going operational.")
 
-        elif self.init_phase == 'standby':
-            self._tick_standby_walk()
+        # elif self.init_phase == 'standby':
+        #     self._tick_standby_walk()
 
         elif self.init_phase == 'waiting_mission':
             if now >= self.init_wait_deadline:
@@ -485,7 +530,7 @@ class CrabMissionDispatcher(Node):
             sid, set_id, role = self.home_walk_order[self.home_walk_index]
             self.hovering = False
             self.current = self._make_init_mission(
-                'home_state', f'HOME_SET{set_id}_{role.upper()}_{sid}',
+                'calibration', f'CALIB_SET{set_id}_{role.upper()}_{sid}',
                 target_servo_id=sid)
             self._dispatch(self.current, fresh=True)
             self._init_dispatched = True
@@ -552,7 +597,7 @@ class CrabMissionDispatcher(Node):
         if self.current is None and not self._init_dispatched:
             sid, set_id, role = self.home_walk_order[self.standby_walk_index]
             self.current = self._make_init_mission(
-                'standby', f'STANDBY_SET{set_id}_{role.upper()}_{sid}',
+                'calibration', f'CALIB2_SET{set_id}_{role.upper()}_{sid}',
                 target_servo_id=sid)
             self._dispatch(self.current, fresh=True)
             self._init_dispatched = True
@@ -643,7 +688,8 @@ class CrabMissionDispatcher(Node):
         }
         # Forward only the fields this mission carries (kind-dependent + overrides).
         for key in ('target_tag_id', 'heading', 'velocity', 'effort', 'distance',
-                    'target_servo_id'):
+                    'periods', 'cycles', 'roll_effort', 'pitch_effort', 'pitch_phase',
+                    'pshift', 'target_servo_id', 'drive_ids', 'drive_positions'):
             if key in mission:
                 payload[key] = mission[key]
         msg = String()
@@ -662,7 +708,7 @@ class CrabMissionDispatcher(Node):
         self.get_logger().info("Queue empty — commanding HOVER.")
 
     def _make_init_mission(self, kind, label, **extra):
-        """Build one mandatory init mission (home_state or standby)."""
+        """Build one mandatory init mission (calibration)."""
         m = {
             'kind': kind,
             'label': label,

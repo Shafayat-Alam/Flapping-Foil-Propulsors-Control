@@ -139,79 +139,60 @@ def hold(servo_ids, value: float = 0.0) -> dict:
 # ===========================================================================
 
 def flap(roll_id, pitch_id, t: float, freq: float, amp: float,
-         phase: float = 0.0, waveform=sine, roll_angle: float = math.pi / 2.0,
-         **kwargs) -> dict:
+         phase: float = 0.0, waveform=sine,
+         pitch_center: float = 0.0, **kwargs) -> dict:
     """
-    Flapping gait — broadside thrust.
+    Flapping gait — pitch oscillation with the roll servo left untouched.
 
-    The roll servo is held at ``roll_angle`` (default π/2) so the fin presents
-    maximum surface area to the flow, and the pitch servo oscillates around 0
-    with the chosen ``waveform``.  Think of holding an open palm perpendicular
-    to the flow and waving the whole hand.
+    Only the pitch servo is commanded: it oscillates about ``pitch_center``
+    (the standby pose, 0 in extended mode) with the chosen ``waveform`` (amplitude
+    ``amp`` in rad, ``freq`` set by the controller).  The roll servo is
+    deliberately NOT commanded, so it holds whatever position it was last driven
+    to (or keeps following the IMU) — the caller publishes only the pitch servo
+    so the omitted roll is left alone rather than reset.
+
+    ``roll_id`` is accepted for call-site symmetry with the other gaits but is
+    intentionally unused (roll is held, not set).
 
     Args:
-        roll_id, pitch_id : servo IDs for this fin
+        roll_id : this fin's roll servo — accepted but not commanded (held)
+        pitch_id : this fin's pitch servo — the one that oscillates
         t, freq, amp, phase : standard waveform parameters (amp in rad)
         waveform : Layer-1 function or name selecting the pitch shape
-        roll_angle : fixed roll hold position in rad (broadside exposure)
+        pitch_center : oscillation midpoint (rad; standby pose = 0 in extended mode)
 
     Extra ``kwargs`` (e.g. ``duty``, ``ramp``) are forwarded to the waveform.
 
-    Returns: ``{roll_id: roll_angle, pitch_id: pitch_value}``
+    Returns: ``{pitch_id: pitch_value}``  (roll omitted → held at current pos)
     """
     wave = get_waveform(waveform)
-    pitch_value = wave(t, freq, amp, phase, **kwargs)
-    targets = drive(roll_id, roll_angle)
-    targets.update(drive(pitch_id, pitch_value))
-    return targets
+    pitch_value = pitch_center + wave(t, freq, amp, phase, **kwargs)
+    return drive(pitch_id, pitch_value)
 
 
-def paddle(roll_id, pitch_id, t: float, freq: float, amp: float,
-           phase: float = 0.0, power_fraction: float = 0.5,
-           power_angle: float = math.pi / 2.0, feather_angle: float = 0.0,
-           **kwargs) -> dict:
+def paddle(roll_id, pitch_id, tau: float, freq: float,
+           roll_amp: float, pitch_amp: float,
+           roll_center: float = 0.0, pitch_center: float = 0.0,
+           pitch_phase: float = 0.0, **kwargs) -> dict:
     """
-    Paddling gait — rowing stroke with a graceful, low-drag recovery.
+    Sine paddling gait — roll and pitch are both sinusoids at the same frequency
+    ``freq`` (Hz), about the rest pose (roll_center, pitch_center).  The pitch
+    curve is phase-shifted from roll by ``pitch_phase`` (rad); that shift sets
+    the roll/pitch phasing that produces thrust.  Roll and pitch amplitudes are
+    independent (A_r, A_p) — the controller scales them from separate efforts.
 
-    One cycle has two smoothly-eased phases:
+        roll_value  = roll_center  + A_r · sin(2π·freq·tau)
+        pitch_value = pitch_center + A_p · sin(2π·freq·tau + pitch_phase)
 
-      * Power stroke   (0 → ``power_fraction``): roll is held broadside at
-        ``power_angle`` for maximum surface area while pitch sweeps from -amp
-        to +amp, pushing water.
-      * Recovery stroke (``power_fraction`` → 1): roll rotates to
-        ``feather_angle`` (edge-on, minimum drag) while pitch slips back from
-        +amp to -amp.  Nothing snaps — both strokes are eased.
-
-    Drag asymmetry comes from feathering the fin on recovery, not from a fast
-    return, so the whole motion stays graceful.
-
-    Args:
-        roll_id, pitch_id : servo IDs for this fin
-        t, freq, amp, phase : standard parameters (amp in rad)
-        power_fraction : fraction of the cycle spent on the power stroke (0..1)
-        power_angle : roll hold during the power stroke (broadside, rad)
-        feather_angle : roll hold during recovery (edge-on, rad)
+    ``roll_amp`` (A_r) is SIGNED — its sign flips the roll sinusoid to reverse
+    thrust (forward fin +A_r, reversed fin −A_r).  Sinusoids are naturally
+    continuous, so multiple cycles flow smoothly with no reset.  ``tau`` is
+    mission-relative time (s).
 
     Returns: ``{roll_id: roll_value, pitch_id: pitch_value}``
     """
-    power_fraction = max(0.05, min(0.95, power_fraction))
-    cycle = (freq * t + phase / TWO_PI) % 1.0
-
-    if cycle < power_fraction:
-        # Power stroke: broadside roll, eased pitch sweep -amp -> +amp
-        s = ease(cycle / power_fraction)
-        roll_value = power_angle
-        pitch_value = amp * (2.0 * s - 1.0)
-    else:
-        # Recovery stroke: feathered roll, eased pitch slip +amp -> -amp
-        s = ease((cycle - power_fraction) / (1.0 - power_fraction))
-        roll_value = power_angle + (feather_angle - power_angle) * ease(
-            # feather quickly at the start of recovery, hold edge-on, then
-            # return to broadside as the next power stroke approaches
-            math.sin(math.pi * s)
-        )
-        pitch_value = amp * (1.0 - 2.0 * s)
-
+    roll_value = roll_center + sine(tau, freq, roll_amp, 0.0)
+    pitch_value = pitch_center + sine(tau, freq, pitch_amp, pitch_phase)
     targets = drive(roll_id, roll_value)
     targets.update(drive(pitch_id, pitch_value))
     return targets

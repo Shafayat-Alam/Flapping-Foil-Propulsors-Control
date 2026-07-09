@@ -89,6 +89,10 @@ class DynamixelXW430Interface(Node):
     PRESENT_BLOCK_START = 122
     PRESENT_BLOCK_LEN   = 25
     HW_ERROR_DECIMATION = 50    # poll Hardware Error Status every Nth loop
+    # A servo that stops answering the feedback read for this many consecutive
+    # loops is declared LOST (power loss / disconnect / brownout) — enough to
+    # ride through the odd dropped packet without a false alarm.
+    FB_MISS_THRESHOLD = 5
 
     SERVO_DIAG_STRIDE = 13      # values per servo in servo_diagnostics
 
@@ -114,21 +118,36 @@ class DynamixelXW430Interface(Node):
     def __init__(self):
         super().__init__('servo_actuator')
 
-        self.declare_parameter('port', '/dev/ttyUSB0')
+        # Serial port for the Dynamixel bus.  Default is the FTDI adapter's
+        # stable by-id path (survives replugs / ttyUSB0<->ttyUSB1 renumbering);
+        # override in the launch file for a different adapter.
+        self.declare_parameter(
+            'port', '/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FT9MIR5U-if00-port0')
         self.declare_parameter('baudrate', 1000000)
-        self.declare_parameter('hardware_rate', 500.0)
+        self.declare_parameter('hardware_rate', 50.0)
         self.declare_parameter('current_limit', 800)
         self.declare_parameter('servo_velocity_i_gain', 1920)
         self.declare_parameter('servo_velocity_p_gain', 100)
         self.declare_parameter('servo_position_d_gain', 0)
         self.declare_parameter('servo_position_i_gain', 0)
-        self.declare_parameter('servo_position_p_gain', 800)
+        self.declare_parameter('servo_position_p_gain', 900)
         # Caps Position Control Mode's point-to-point trajectory (raw register
         # units, 0 = unlimited/max speed — that's the current "snap to target
         # instantly" behaviour).  Small positive values make home_state/
         # standby moves slow and visually inspectable.
         self.declare_parameter('profile_velocity', 30)
         self.declare_parameter('profile_acceleration', 10)
+        # Servos whose rotation direction is physically reversed (e.g. a
+        # mirror-mounted fin).  Their goal position/velocity is negated on the
+        # way out and their present position/velocity negated on the way in, so
+        # the rest of the stack commands every servo in one logical frame.
+        # JSON list of ids, e.g. '[3, 4]' for the left fin.
+        self.declare_parameter('reverse_servos', '[]')
+        try:
+            self.reversed_ids = set(int(x) for x in
+                                    json.loads(self.get_parameter('reverse_servos').value))
+        except (ValueError, TypeError):
+            self.reversed_ids = set()
 
         port_name = self.get_parameter('port').value
         init_baud = self.get_parameter('baudrate').value
@@ -136,21 +155,26 @@ class DynamixelXW430Interface(Node):
 
         self.port = PortHandler(port_name)
         self.packet_handler = PacketHandler(2.0)
-
-        if not self.port.openPort():
-            self.get_logger().fatal(f"Cannot open port {port_name}")
-        if not self.port.setBaudRate(init_baud):
-            self.get_logger().fatal(f"Cannot set baudrate {init_baud}")
-
-        # Let the USB-serial adapter and bus settle before the first packet —
-        # writing immediately after openPort() is a common source of dropped
-        # first-packets (and therefore intermittently-missing torque enable).
-        time.sleep(0.25)
+        self._port_name = port_name
+        self._init_baud = init_baud
+        self._port_warned = False
+        # Opening is non-fatal: a missing adapter logs an error and the node
+        # keeps running, retrying the port so it never crashes the launch.
+        self.port_open = self._open_port()
 
         self.current_baudrate = init_baud
         self.latest_command = None
         self.active_ids = []
         self.id_modes = {}
+        # Operating Mode (control-table reg 11) written to every servo at setup:
+        #   1 = Velocity, 3 = Position (single-turn), 4 = Extended Position
+        #   (multi-turn, allows negative goals).  Default is Extended Position;
+        #   _config_cb overrides from robot_config's operating_mode string.
+        self.op_mode_code = 4
+        # Per-servo dropout detection: consecutive feedback-read misses, and the
+        # set of servos currently flagged LOST (edge-logged once each way).
+        self._fb_miss = {}
+        self._servo_lost = set()
         self.position_tick_limits = {}   # sid -> (min_tick, max_tick), from robot_config
         self.is_configured = False
         self.is_configuring = False
@@ -177,10 +201,61 @@ class DynamixelXW430Interface(Node):
         hw_period = 1.0 / hw_rate
         self.hw_timer = self.create_timer(hw_period, self._hardware_loop)
 
+        # Config held until the port is open (adapter may arrive after launch):
+        # the last robot_config we heard, replayed to _setup_hardware once the
+        # port comes up.
+        self._pending_ids = None
+        self._pending_modes = None
+        self._port_retry_timer = self.create_timer(2.0, self._retry_open_port)
+
         # Register SIGINT handler for immediate torque disable
         signal.signal(signal.SIGINT, self._emergency_stop)
 
         self.get_logger().info(f"DynamixelXW430Interface online — port={port_name} baud={init_baud} hw_rate={hw_rate} Hz")
+
+    def _open_port(self):
+        """Open the serial port; non-fatal. Returns True on success.
+
+        A missing adapter (by-id path absent) makes serial.Serial raise inside
+        openPort(); we catch it so the node stays alive and retries later
+        instead of crashing the whole launch.
+        """
+        try:
+            if not self.port.openPort():
+                raise RuntimeError("openPort() returned False")
+            if not self.port.setBaudRate(self._init_baud):
+                raise RuntimeError("setBaudRate() returned False")
+            # Let the USB-serial adapter and bus settle before the first packet —
+            # writing immediately after openPort() is a common source of dropped
+            # first-packets (and therefore intermittently-missing torque enable).
+            time.sleep(0.25)
+            self.get_logger().info(
+                f"Serial port {self._port_name} open @ {self._init_baud} baud.")
+            self._port_warned = False
+            return True
+        except Exception as e:
+            if not self._port_warned:
+                self.get_logger().error(
+                    f"Serial port {self._port_name} not available ({e}) — running "
+                    f"WITHOUT servos; will keep retrying.")
+                self._port_warned = True
+            try:
+                self.port.closePort()
+            except Exception:
+                pass
+            return False
+
+    def _retry_open_port(self):
+        """Periodic reopen while the port is down; re-run setup once it's back."""
+        if self.port_open:
+            return
+        if not self._open_port():
+            return
+        self.port_open = True
+        # Port came back — replay the last config so the servos get configured.
+        if self._pending_ids and not self.is_configured and not self.is_configuring:
+            self._setup_hardware(list(self._pending_ids), list(self._pending_modes),
+                                 self.get_parameter('baudrate').value)
 
     def _config_cb(self, msg: String):
         """
@@ -223,9 +298,19 @@ class DynamixelXW430Interface(Node):
         if self.is_configured or self.is_configuring or not ids:
             return
 
-        mode_code = 1 if cfg.get('operating_mode') == 'velocity' else 3
-        self._setup_hardware(ids, [mode_code] * len(ids),
-                             self.get_parameter('baudrate').value)
+        op = cfg.get('operating_mode', 'extended_position')
+        self.op_mode_code = {'velocity': 1, 'position': 3,
+                             'extended_position': 4}.get(op, 4)
+        modes = [self.op_mode_code] * len(ids)
+        # Remember the config so a late/reconnected port can be configured by
+        # the retry timer even if it wasn't open when config first arrived.
+        self._pending_ids, self._pending_modes = ids, modes
+        if not self.port_open:
+            self.get_logger().warn(
+                "robot_config received but serial port is down — will configure "
+                "servos once the port comes up.")
+            return
+        self._setup_hardware(ids, modes, self.get_parameter('baudrate').value)
 
     def _cmd_cb(self, msg: Float32MultiArray):
         try:
@@ -242,6 +327,10 @@ class DynamixelXW430Interface(Node):
             self.get_logger().warn(f"Invalid joint command: {e}")
 
     def _hardware_loop(self):
+        # Port down (adapter unplugged / never present): do nothing this cycle.
+        # The retry timer reopens it and replays config when it returns.
+        if not self.port_open:
+            return
         if self.latest_command is None or self.is_configuring:
             return
 
@@ -259,12 +348,13 @@ class DynamixelXW430Interface(Node):
 
             mode = modes[i]
             value = values[i]
+            direction = -1 if sid in self.reversed_ids else 1   # mirror-mounted → invert
 
             if mode == 3:
-                raw = int(round(value * self.TICKS_PER_RAD))
+                raw = direction * int(round(value * self.TICKS_PER_RAD))
                 self.pos_sync_writer.addParam(sid, _pack4(raw))
             elif mode == 1:
-                raw = int(round(value * self.RADS_TO_VEL_UNIT))
+                raw = direction * int(round(value * self.RADS_TO_VEL_UNIT))
                 self.vel_sync_writer.addParam(sid, _pack4(raw))
 
         try:
@@ -273,7 +363,12 @@ class DynamixelXW430Interface(Node):
             self.vel_sync_writer.txPacket()
             self.vel_sync_writer.clearParam()
         except Exception as e:
-            self.get_logger().error(f"SyncWrite error: {e}")
+            # A raise here (vs a comm-error return code) means the serial handle
+            # itself died — adapter unplugged mid-run.  Drop the port so the
+            # retry timer reopens and reconfigures instead of erroring forever.
+            self.get_logger().error(f"SyncWrite error ({e}) — dropping port, will re-open.")
+            self.port_open = False
+            self.is_configured = False
 
         # Read phase
         self._loop_count += 1
@@ -288,13 +383,27 @@ class DynamixelXW430Interface(Node):
             except Exception as e:
                 self.get_logger().error(f"HW-error SyncRead error: {e}")
 
+        read_ok = False
         try:
-            if self.feedback_read_sync.txRxPacket() == COMM_SUCCESS:
+            read_ok = (self.feedback_read_sync.txRxPacket() == COMM_SUCCESS)
+        except Exception as e:
+            self.get_logger().error(f"Feedback SyncRead error: {e}")
+
+        # A whole-bus read failure means no servo was heard this cycle — count
+        # a miss for every active servo (e.g. all power lost, or USB dropped).
+        if not read_ok:
+            for sid in self.active_ids:
+                self._track_servo_presence(sid, present=False)
+
+        try:
+            if read_ok:
                 base = self.PRESENT_BLOCK_START
                 fb_data = []     # control feedback (joint_feedback): 6 per servo
                 diag_data = []   # full diagnostics (servo_diagnostics): 13 per servo
                 for sid in self.active_ids:
-                    if not self.feedback_read_sync.isAvailable(sid, base, self.PRESENT_BLOCK_LEN):
+                    present = self.feedback_read_sync.isAvailable(sid, base, self.PRESENT_BLOCK_LEN)
+                    self._track_servo_presence(sid, present)
+                    if not present:
                         continue
                     g = self.feedback_read_sync.getData
                     moving     = g(sid, base + 0, 1)
@@ -308,9 +417,12 @@ class DynamixelXW430Interface(Node):
                     volt       = g(sid, base + 22, 2)
                     temp       = g(sid, base + 24, 1)
 
+                    # Reversed servos report in the same logical frame they're
+                    # commanded in — negate position/velocity (goal + present).
+                    direction = -1.0 if sid in self.reversed_ids else 1.0
                     mode = float(self.id_modes.get(sid, 0))
-                    position_rad = float(pos) / self.TICKS_PER_RAD
-                    velocity_rps = float(vel) * self.VEL_UNIT_TO_RADS
+                    position_rad = direction * float(pos) / self.TICKS_PER_RAD
+                    velocity_rps = direction * float(vel) * self.VEL_UNIT_TO_RADS
                     current_a    = float(curr) * self.CURRENT_UNIT_A
                     voltage_v    = float(volt) * self.VOLTAGE_UNIT_V
 
@@ -319,8 +431,8 @@ class DynamixelXW430Interface(Node):
                     ])
                     diag_data.extend([
                         float(sid), mode, float(pwm), current_a, velocity_rps, position_rad,
-                        float(vel_traj) * self.VEL_UNIT_TO_RADS,
-                        float(pos_traj) / self.TICKS_PER_RAD,
+                        direction * float(vel_traj) * self.VEL_UNIT_TO_RADS,
+                        direction * float(pos_traj) / self.TICKS_PER_RAD,
                         voltage_v, float(temp), float(moving), float(moving_st),
                         float(self.hw_error.get(sid, 0)),
                     ])
@@ -335,6 +447,28 @@ class DynamixelXW430Interface(Node):
                     self.diag_pub.publish(dmsg)
         except Exception as e:
             self.get_logger().error(f"SyncRead error: {e}")
+
+    def _track_servo_presence(self, sid, present):
+        """
+        Watch each servo's feedback for a sudden dropout (power loss / unplug /
+        brownout).  A servo that answers resets its miss counter (and, if it was
+        flagged LOST, logs recovery).  A servo that misses FB_MISS_THRESHOLD
+        reads in a row is edge-logged as an ERROR exactly once — no per-loop spam.
+        """
+        if present:
+            self._fb_miss[sid] = 0
+            if sid in self._servo_lost:
+                self._servo_lost.discard(sid)
+                self.get_logger().warn(f"Servo {sid} back ONLINE — feedback restored.")
+            return
+
+        self._fb_miss[sid] = self._fb_miss.get(sid, 0) + 1
+        if self._fb_miss[sid] == self.FB_MISS_THRESHOLD and sid not in self._servo_lost:
+            self._servo_lost.add(sid)
+            self.get_logger().error(
+                f"!!! SERVO {sid} POWER LOST — no feedback for "
+                f"{self.FB_MISS_THRESHOLD} consecutive reads "
+                f"(power loss / disconnected / brownout).")
 
     def _write_checked(self, write_fn, sid, addr, value, label, retries=3):
         """
@@ -367,6 +501,25 @@ class DynamixelXW430Interface(Node):
             ph.write1ByteTxRx(self.port, sid, self.ADDR_TORQUE_ENABLE, 0)
             time.sleep(0.005)
 
+        # Ping each requested servo and keep only the ones that respond, so a
+        # missing / unpowered servo produces a clear error but the connected
+        # ones still come up and move.  ids/modes are filtered together.
+        present, missing = [], []
+        for i, sid in enumerate(ids):
+            _, comm, _err = ph.ping(self.port, sid)
+            (present if comm == COMM_SUCCESS else missing).append(i)
+        if missing:
+            self.get_logger().error(
+                f"!!! Servo(s) {[ids[i] for i in missing]} NOT RESPONDING "
+                f"(not connected / unpowered) — skipping them; bringing up "
+                f"connected servos {[ids[i] for i in present]}.")
+        if not present:
+            self.get_logger().error("No servos responded — nothing to configure.")
+            self.is_configuring = False
+            return
+        ids = [ids[i] for i in present]
+        modes = [modes[i] for i in present]
+
         # Torque OFF (checked) for the servos we actually care about — Operating
         # Mode is an EEPROM register that silently fails to change while torque
         # is enabled, so this must be confirmed before writing the mode below.
@@ -383,27 +536,29 @@ class DynamixelXW430Interface(Node):
         profile_vel = self.get_parameter('profile_velocity').value
         profile_accel = self.get_parameter('profile_acceleration').value
 
-        for i, sid in enumerate(ids):
-            mode = modes[i]
+        op_mode = self.op_mode_code   # 1=velocity, 3=position, 4=extended position
 
-            if mode in (0, 1, 3):
-                self._write_checked(ph.write1ByteTxRx, sid, self.ADDR_OPERATING_MODE, mode, "operating-mode")
+        for i, sid in enumerate(ids):
+            if op_mode in (0, 1, 3, 4):
+                self._write_checked(ph.write1ByteTxRx, sid, self.ADDR_OPERATING_MODE, op_mode, "operating-mode")
 
             # Homing Offset is never read or written here — it's calibrated
             # once on the servo itself (e.g. via Dynamixel Wizard) and this
             # node always trusts whatever Present Position 0 already means.
+            # In Extended Position mode the servo is re-homed so that the
+            # STANDBY pose reads Present Position 0 (see the controller).
 
-            # Hard position clamps (EEPROM, so written here while torque is
-            # off): the servo hardware itself will refuse any goal outside
-            # [min, max], a backstop to the controller's software clamp.
-            # A negative limit (set 1 reversed pitch) is written as its
-            # 32-bit two's-complement; standard Position Control Mode may
-            # reject it — the checked write will log that if so.
-            min_tick, max_tick = self.position_tick_limits.get(sid, (0, 4095))
-            self._write_checked(ph.write4ByteTxRx, sid, self.ADDR_MAX_POSITION_LIMIT,
-                                ctypes.c_uint32(max_tick).value, "max-position-limit")
-            self._write_checked(ph.write4ByteTxRx, sid, self.ADDR_MIN_POSITION_LIMIT,
-                                ctypes.c_uint32(min_tick).value, "min-position-limit")
+            # Hard position clamps (Min/Max Position Limit) only take effect in
+            # Position Control Mode (3).  Extended Position Control Mode (4)
+            # ignores them entirely (goal spans the full multi-turn range and
+            # may be negative), so we don't write them there — the controller's
+            # software clamp is the sole position guard in extended mode.
+            if op_mode == 3:
+                min_tick, max_tick = self.position_tick_limits.get(sid, (0, 4095))
+                self._write_checked(ph.write4ByteTxRx, sid, self.ADDR_MAX_POSITION_LIMIT,
+                                    ctypes.c_uint32(max_tick).value, "max-position-limit")
+                self._write_checked(ph.write4ByteTxRx, sid, self.ADDR_MIN_POSITION_LIMIT,
+                                    ctypes.c_uint32(min_tick).value, "min-position-limit")
 
             self._write_checked(ph.write2ByteTxRx, sid, self.ADDR_CURRENT_LIMIT, current_limit, "current-limit")
             self._write_checked(ph.write2ByteTxRx, sid, self.ADDR_VELOCITY_I_GAIN, vel_i, "velocity-i-gain")
@@ -417,7 +572,7 @@ class DynamixelXW430Interface(Node):
             self._write_checked(ph.write4ByteTxRx, sid, self.ADDR_PROFILE_VELOCITY, profile_vel, "profile-velocity")
             self._write_checked(ph.write4ByteTxRx, sid, self.ADDR_PROFILE_ACCELERATION, profile_accel, "profile-acceleration")
 
-            self.id_modes[sid] = mode
+            self.id_modes[sid] = op_mode
             time.sleep(0.005)
 
         # Torque ON (checked) — track failures so a dropped packet is loud
@@ -447,6 +602,8 @@ class DynamixelXW430Interface(Node):
             self.hw_error_read.addParam(sid)
         
         self.active_ids = list(ids)
+        self._fb_miss = {sid: 0 for sid in ids}   # reset dropout tracking
+        self._servo_lost = set()
         self.is_configured = True
         self.is_configuring = False
 

@@ -1,0 +1,18 @@
+PHASE=1.570796   # pitch phase shift (rad) — change this one value; π/2 = 1.570796
+
+efforts=(0.1 0.2 0.3 0.4 0.5)
+labels=(10 20 30 40 50)
+
+# ── Sweep A: roll effort fixed 10%, pitch effort 10% → 50% ──
+for i in "${!efforts[@]}"; do
+  ros2 topic pub --once /mission_input std_msgs/msg/String \
+    "{data: 'forward_paddle velocity:5 roll_effort:0.1 pitch_effort:${efforts[$i]} pitch_phase:${PHASE} cycles:4 label:PITCHEFF_${labels[$i]}'}"
+  sleep 38
+done
+
+# ── Sweep B: pitch effort back to 10%, roll effort 10% → 50% ──
+for i in "${!efforts[@]}"; do
+  ros2 topic pub --once /mission_input std_msgs/msg/String \
+    "{data: 'forward_paddle velocity:5 roll_effort:${efforts[$i]} pitch_effort:0.1 pitch_phase:${PHASE} cycles:4 label:ROLLEFF_${labels[$i]}'}"
+  sleep 38
+done

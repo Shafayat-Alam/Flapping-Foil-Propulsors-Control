@@ -98,10 +98,10 @@ def generate_launch_description():
                                 '[2, 1], '
                                 '[3, 2], '
                                 '[4, 2]]',
-                'operating_mode': 'position',   # 'position' or 'velocity'
-                'control_rate': 400.0,          # Hz — must match controller
+                'operating_mode': 'extended_position',   # 'extended_position' | 'position' | 'velocity'
+                'control_rate': 100.0,         # Hz — must match controller
                 'operational_readiness': 2.0,  # s — wait after home_state before standby
-                'mission_readiness': 5.0,       # s — wait after standby before missions run
+                'mission_readiness': 2.0,       # s — wait after standby before missions run
                 'gait_velocity': 3.77,          # rad/s — nominal peak stroke rate (2π·f·A)
                 'gait_effort': 0.6,             # rad — nominal stroke amplitude
                 'default_retries': 2,           # auto-retries before asking a human
@@ -122,8 +122,25 @@ def generate_launch_description():
                 'kp': 0.0,
                 'ki': 0.0,
                 'kd': 0.0,
-                'control_rate': 400.0,          # Hz — control loop rate
+                'control_rate': 100.0,         # Hz — control loop rate (higher = finer,
+                                               # smoother setpoint stream → less jitter)
                 'telemetry_decimation': 1,      # publish every sample
+                'paddle_cycles': 1,            # default gait cycles per command (0 = forever)
+                'paddle_velocity': 5.0,        # default paddle velocity (peak stroke rate)
+                'paddle_pitch_phase': 1.5707963267948966,  # π/2 — pitch sine phase lead vs roll
+                # Output low-pass on every position command to kill setpoint
+                # jitter (0 = off; →1 = smoother but more lag).  Weight kept on
+                # the previous command each control cycle.
+                'command_smoothing': 0.5,
+                # Calibration zero pose (rad) that 'calibration' drives every
+                # servo to, and that everything (IMU-follow, gaits) references.
+                # Both 0 → calibration sets all servos to 0.
+                'roll_zero': 0.0,                  # roll rest position
+                'pitch_zero': 0.0,                 # pitch rest position
+                # Position limits: each servo clamped to its zero ± this (rad).
+                # Sole clamp in Extended Position Mode; change freely here.
+                'roll_limit': 3.141592653589793,   # roll:  0 ± π   → [-π, π]
+                'pitch_limit': 1.5707963267948966, # pitch: 0 ± π/2 → [-π/2, π/2]
             }],
         ),
 
@@ -157,24 +174,32 @@ def generate_launch_description():
             name='servo_actuator',
             output='screen',
             parameters=[{
-                'port':       '/dev/ttyUSB0',
+                # Stable by-id path for the FTDI adapter — survives replugs and
+                # ttyUSB enumeration order (ttyUSB0 vs ttyUSB1) changing.
+                'port':       '/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FT9MIR5U-if00-port0',
                 'baudrate':   1000000,
-                'hardware_rate': 500.0,  # Hz - write/read cycle rate
-                'current_limit': 1193,  # XW430-T200 max valid value (3.209 A)
+                # Per-servo rotation-direction inversion (JSON list of ids).
+                # Servo 1 (set 1 roll) and servo 2 (set 1 pitch) rotate the wrong
+                # way — reverse both.  Servos 3 (set 2 roll) and 4 (set 2 pitch)
+                # are correct as-is.
+                'reverse_servos': '[1, 2]',
+                'hardware_rate': 100.0,  # Hz - write/read cycle rate (match control_rate
+                                         # for a smooth, low-jitter setpoint stream)
+                'current_limit': 648,  # XW430-T200 max valid value (1.743 A)
 
-                'servo_position_p_gain': 800,
+                'servo_position_p_gain': 900,
                 'servo_position_i_gain': 0,
                 'servo_position_d_gain': 0,
                 'servo_velocity_p_gain': 100,
                 'servo_velocity_i_gain': 1920,
-                # Slow, inspectable point-to-point moves for home_state/standby
-                # (raw register units, 0 = unlimited/instant — see interface).
-                # Acceleration matters as much as velocity here: a low value
-                # gives a long, slow deceleration tail near the target that's
-                # easy to mistake for "already done" well before it's
-                # actually within POSE_TOLERANCE.
-                'profile_velocity': 60,
-                'profile_acceleration': 20,
+                # 0 = unlimited (no onboard trapezoidal profile).  The controller
+                # STREAMS the gait trajectory at its control rate, so the servo
+                # must track each setpoint at full speed — a nonzero profile caps
+                # the speed and makes fast phases (e.g. the paddle pitch sweep)
+                # lag and never reach their target.  Raise only if you want
+                # deliberately slow, capped point-to-point moves.
+                'profile_velocity': 0,
+                'profile_acceleration': 0,
             }],
         ),
 
@@ -187,6 +212,7 @@ def generate_launch_description():
             name='icm20948_imu',
             output='screen',
             parameters=[{
+                'i2c_bus': 7,             # I2C bus number (/dev/i2c-7)
                 'i2c_address': 0x69,      # Default I2C address
                 'sample_rate': 100.0,     # Hz - IMU sampling rate
                 'frame_id': 'imu_link',   # TF frame name
@@ -207,11 +233,30 @@ def generate_launch_description():
                 'video_width': 1920,                         # Resolution
                 'video_height': 1080,
                 'fps': 30.0,                                 # Frames per second
-                'output_directory': '/home/shafa/videos',    # Video save location
+                'output_directory': '/home/gingerstep/videos',    # Video save location
                 'fourcc': 'mp4v',                            # Codec: 'mp4v', 'XVID', 'H264'
                 'publish_images': True,                      # feed perception
                 'image_topic': 'camera/image_raw',
                 'publish_rate': 15.0,                        # Hz cap for republished frames
+            }],
+        ),
+
+        # ------------------------------------------------------------------
+        # Load-Cell Array — receives a force grid over UDP and republishes it
+        # on load_cell_data (also captured by the session recorder).
+        # ------------------------------------------------------------------
+        Node(
+            package=PACKAGE,
+            executable='load_cell_interface',
+            name='load_cell_interface',
+            output='screen',
+            parameters=[{
+                'udp_port': 5005,             # UDP port the sensor streams to
+                'bind_address': '0.0.0.0',    # listen on all interfaces
+                'rows': 6,                    # F/T axes per sample [Fx,Fy,Fz,Tx,Ty,Tz]
+                'cols': 20,                   # samples batched per UDP packet
+                'sample_rate': 100000.0,      # Hz — 20 samples = 200 µs/packet (10 µs apart)
+                'topic': 'load_cell_data',
             }],
         ),
 

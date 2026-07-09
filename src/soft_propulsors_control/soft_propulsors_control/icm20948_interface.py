@@ -28,9 +28,8 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu, MagneticField
 from std_msgs.msg import Header
-import board
-import busio
-from adafruit_icm20x import ICM20948
+import smbus2
+from soft_propulsors_control.icm20948_driver import ICM20948
 
 
 class ICM20948Node(Node):
@@ -46,6 +45,7 @@ class ICM20948Node(Node):
         # ------------------------------------------------------------------
         # Parameters
         # ------------------------------------------------------------------
+        self.declare_parameter('i2c_bus', 1)           # I2C bus number (/dev/i2c-N)
         self.declare_parameter('i2c_address', 0x69)
         self.declare_parameter('sample_rate', 100.0)  # Hz
         self.declare_parameter('frame_id', 'imu_link')
@@ -53,19 +53,15 @@ class ICM20948Node(Node):
         # integrated gyro vs. the accelerometer tilt (closer to 1 = smoother but
         # slower to correct drift; closer to 0 = noisier but more accel-locked).
         self.declare_parameter('comp_filter_alpha', 0.98)
-        
+
         # ------------------------------------------------------------------
         # Initialize hardware
         # ------------------------------------------------------------------
-        i2c_addr = self.get_parameter('i2c_address').value
-        
-        try:
-            i2c = busio.I2C(board.SCL, board.SDA)
-            self.imu = ICM20948(i2c, address=i2c_addr)
-            self.get_logger().info(f"ICM20948 initialized at address 0x{i2c_addr:02X}")
-        except Exception as e:
-            self.get_logger().error(f"Failed to initialize ICM20948: {e}")
-            raise
+        self._i2c_bus_num = self.get_parameter('i2c_bus').value
+        self._i2c_addr = self.get_parameter('i2c_address').value
+        self.imu = None
+        self._init_warned = False
+        self._try_init_imu()   # non-fatal: if the IMU isn't there, keep retrying
         
         # ------------------------------------------------------------------
         # Publishers
@@ -92,7 +88,34 @@ class ICM20948Node(Node):
         self._last_t = None
         self._seeded = False
 
+        # Retry hardware init periodically until the IMU appears (hot-plug /
+        # power-up), so a missing IMU never crashes the node.
+        self._retry_timer = self.create_timer(2.0, self._retry_init_imu)
+
         self.get_logger().info(f"Publishing IMU data at {sample_rate} Hz")
+
+    def _try_init_imu(self):
+        """Attempt to bring up the ICM20948; returns True on success (non-fatal)."""
+        try:
+            i2c = smbus2.SMBus(self._i2c_bus_num)
+            self.imu = ICM20948(i2c, address=self._i2c_addr)
+            self.get_logger().info(
+                f"ICM20948 initialized on bus {self._i2c_bus_num} "
+                f"at address 0x{self._i2c_addr:02X}")
+            return True
+        except Exception as e:
+            self.imu = None
+            if not self._init_warned:
+                self.get_logger().error(
+                    f"ICM20948 not available ({e}) — running WITHOUT the IMU "
+                    f"(no orientation data); will keep retrying.")
+                self._init_warned = True
+            return False
+
+    def _retry_init_imu(self):
+        """Periodic retry while the IMU is absent."""
+        if self.imu is None:
+            self._try_init_imu()
 
     @staticmethod
     def _euler_to_quat(roll, pitch, yaw):
@@ -144,6 +167,8 @@ class ICM20948Node(Node):
 
     def _sample_callback(self):
         """Read IMU sensors and publish data."""
+        if self.imu is None:
+            return   # IMU absent — nothing to publish (retry timer handles reconnect)
         try:
             # Read sensor data
             accel_x, accel_y, accel_z = self.imu.acceleration  # m/s^2
@@ -198,7 +223,11 @@ class ICM20948Node(Node):
             self.mag_pub.publish(mag_msg)
             
         except Exception as e:
-            self.get_logger().error(f"IMU read error: {e}")
+            # A read failure usually means the IMU dropped off the bus — release
+            # it so the retry timer re-initialises instead of erroring every tick.
+            self.get_logger().error(f"IMU read error ({e}) — dropping IMU, will re-init.")
+            self.imu = None
+            self._init_warned = False
 
 
 def main(args=None):

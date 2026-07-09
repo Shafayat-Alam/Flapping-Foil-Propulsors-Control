@@ -122,7 +122,7 @@ def record(folder, include_images):
 
     cmd = ['ros2', 'bag', 'record', '-a', '-o', bag_dir]
     if not include_images:
-        cmd += ['-x', IMAGE_EXCLUDE_REGEX]
+        cmd += ['--exclude-regex', IMAGE_EXCLUDE_REGEX]
 
     print(f"[record_session] recording all topics -> {bag_dir}")
     if not include_images:
@@ -203,6 +203,123 @@ def _flatten(d, prefix=''):
     return out
 
 
+# The Dynamixel node packs these Float32MultiArray topics as fixed-width
+# per-servo blocks (the first value of each block is the servo id).  Naming the
+# columns turns anonymous data.0/data.1/... into s<id>_<field> so the CSV is
+# readable without cross-referencing the node.
+FB_FIELDS = ['id', 'mode', 'position_rad', 'velocity_rps', 'current_a', 'voltage_v']
+DIAG_FIELDS = ['id', 'mode', 'pwm', 'current_a', 'velocity_rps', 'position_rad',
+               'velocity_traj_rps', 'position_traj_rad', 'voltage_v', 'temp_C',
+               'moving', 'moving_status', 'hw_error']
+
+
+def _data_indices(flat):
+    """Sorted integer indices of the flattened data.N array cells, if any."""
+    idx = []
+    for k in flat:
+        if k.startswith('data.') and k[5:].isdigit():
+            idx.append(int(k[5:]))
+    return sorted(idx)
+
+
+def _without_data(flat):
+    return {k: v for k, v in flat.items()
+            if not (k.startswith('data.') and k[5:].isdigit())}
+
+
+def _name_servo_blocks(flat, fields):
+    """Rename interleaved per-servo blocks: data.N -> s<id>_<field>."""
+    idx = _data_indices(flat)
+    if not idx:
+        return flat
+    stride = len(fields)
+    out = _without_data(flat)
+    for g in range((max(idx) + 1) // stride):
+        b = g * stride
+        sid_val = flat.get(f'data.{b}')
+        if sid_val is None:
+            continue
+        sid = int(round(sid_val))
+        for j, name in enumerate(fields):
+            if name == 'id':
+                continue                  # id is encoded in the column prefix
+            key = f'data.{b + j}'
+            if key in flat:
+                out[f's{sid}_{name}'] = flat[key]
+    return out
+
+
+def _name_joint_cmd(flat):
+    """joint_cmd is [ids..., modes..., values...]; name by target servo id."""
+    idx = _data_indices(flat)
+    if not idx:
+        return flat
+    n = (max(idx) + 1) // 3
+    if n == 0:
+        return flat
+    out = _without_data(flat)
+    for i in range(n):
+        sid_val = flat.get(f'data.{i}')
+        if sid_val is None:
+            continue
+        sid = int(round(sid_val))
+        out[f's{sid}_cmd_mode'] = flat.get(f'data.{n + i}')
+        out[f's{sid}_cmd_value'] = flat.get(f'data.{2 * n + i}')
+    return out
+
+
+# load_cell_data is a SAMPLES×AXES grid; each row is one time-step's 6-axis
+# force/torque reading in this order (the inner dimension).
+LOADCELL_AXES = ['Fx', 'Fy', 'Fz', 'Tx', 'Ty', 'Tz']
+
+
+def _name_load_cell(flat):
+    """Name the load-cell grid: data.N -> s<sample>_<axis> (e.g. s0_Fx).
+
+    The grid shape comes from the message's MultiArrayLayout dims (inner =
+    'axis').  With the expected 6-axis inner dimension we use the F/T axis
+    names; otherwise we fall back to s<sample>_a<axis>, or cell_<N> if there's
+    no usable layout.  Layout metadata columns are dropped to keep the CSV clean.
+    """
+    idx = _data_indices(flat)
+    if not idx:
+        return flat
+    try:
+        inner = int(flat.get('layout.dim.1.size'))
+    except (TypeError, ValueError):
+        inner = 0
+    out = {k: v for k, v in flat.items()
+           if not (k.startswith('data.') and k[5:].isdigit())
+           and not k.startswith('layout.')}
+    for k in idx:
+        key = f'data.{k}'
+        if key not in flat:
+            continue
+        if inner <= 0:
+            out[f'cell_{k}'] = flat[key]
+            continue
+        sample, axis = divmod(k, inner)
+        if inner == len(LOADCELL_AXES):
+            out[f's{sample}_{LOADCELL_AXES[axis]}'] = flat[key]
+        else:
+            out[f's{sample}_a{axis}'] = flat[key]
+    return out
+
+
+def _name_fields(topic, flat):
+    """Give known array topics readable per-servo / per-cell column names."""
+    leaf = (topic or '').rsplit('/', 1)[-1]
+    if leaf == 'joint_feedback':
+        return _name_servo_blocks(flat, FB_FIELDS)
+    if leaf == 'servo_diagnostics':
+        return _name_servo_blocks(flat, DIAG_FIELDS)
+    if leaf == 'joint_cmd':
+        return _name_joint_cmd(flat)
+    if leaf == 'load_cell_data':
+        return _name_load_cell(flat)
+    return flat
+
+
 def _decode(type_map, topic, data):
     from rclpy.serialization import deserialize_message
     from rosidl_runtime_py.utilities import get_message
@@ -210,7 +327,7 @@ def _decode(type_map, topic, data):
     try:
         msg_cls = get_message(type_map[topic])
         msg = deserialize_message(data, msg_cls)
-        return _flatten(message_to_ordereddict(msg))
+        return _name_fields(topic, _flatten(message_to_ordereddict(msg)))
     except Exception:                    # noqa: BLE001 — skip undecodable frames
         return None
 

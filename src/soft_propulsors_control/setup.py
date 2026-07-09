@@ -35,6 +35,7 @@ setup(
             'Dynamixel_XW430_T200_interface = soft_propulsors_control.Dynamixel_XW430_T200_interface:main',
             'icm20948_interface = soft_propulsors_control.icm20948_interface:main',
             'stellarhd_interface = soft_propulsors_control.stellarhd_interface:main',
+            'load_cell_interface = soft_propulsors_control.load_cell_interface:main',
             'gazebo_dynamixel_interface = soft_propulsors_control.gazebo_dynamixel_interface:main',
             'gazebo_icm20948_interface = soft_propulsors_control.gazebo_icm20948_interface:main',
             'gazebo_stellarhd_interface = soft_propulsors_control.gazebo_stellarhd_interface:main',

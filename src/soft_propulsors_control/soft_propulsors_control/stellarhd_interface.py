@@ -28,6 +28,13 @@ import threading
 from pathlib import Path
 from datetime import datetime
 
+# Silence OpenCV's own C++ VIDEOIO warnings (e.g. "can't open camera by index"),
+# which it prints on every VideoCapture() attempt regardless of our logging.
+try:
+    cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
+except Exception:
+    pass
+
 try:
     from sensor_msgs.msg import Image
     from cv_bridge import CvBridge
@@ -54,12 +61,14 @@ class StellarHDCameraNode(Node):
         self.declare_parameter('video_width', 1920)
         self.declare_parameter('video_height', 1080)
         self.declare_parameter('fps', 30.0)
-        self.declare_parameter('output_directory', '/home/claude/videos')
+        self.declare_parameter('output_directory', '/home/gingerstep/videos')
         self.declare_parameter('fourcc', 'mp4v')          # 'mp4v', 'XVID', 'H264'
         # Frame republishing (so perception never opens the camera itself)
         self.declare_parameter('publish_images', True)
         self.declare_parameter('image_topic', 'camera/image_raw')
         self.declare_parameter('publish_rate', 15.0)      # Hz cap for republished frames
+        # How often to silently retry opening an absent camera (seconds).
+        self.declare_parameter('reconnect_interval', 30.0)
 
         # ------------------------------------------------------------------
         # Initialize camera
@@ -69,27 +78,40 @@ class StellarHDCameraNode(Node):
         height = self.get_parameter('video_height').value
         fps = self.get_parameter('fps').value
 
-        self.cap = cv2.VideoCapture(camera_index)
+        # Force the V4L2 backend: OpenCV's default GStreamer backend fails to
+        # start a v4l2src pipeline on this platform ("Internal data stream
+        # error"), whereas the direct V4L2 backend opens the device cleanly.
+        self._camera_index = camera_index
+        self._req_width, self._req_height, self._req_fps = width, height, fps
+        self.cap = cv2.VideoCapture(camera_index, cv2.CAP_V4L2)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         self.cap.set(cv2.CAP_PROP_FPS, fps)
 
-        if not self.cap.isOpened():
-            self.get_logger().error(f"Failed to open camera {camera_index}")
-            raise RuntimeError("Camera initialization failed")
-
-        actual_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        actual_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
-        self.get_logger().info(
-            f"Camera initialized: {actual_width}x{actual_height} @ {actual_fps} fps"
-        )
+        # Missing camera is non-fatal: log an error and keep running (the capture
+        # loop backs off and periodically retries opening it) so it never crashes
+        # the node — the rest of the stack works without the camera.
+        if self.cap.isOpened():
+            actual_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            actual_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
+            self.get_logger().info(
+                f"Camera initialized: {actual_width}x{actual_height} @ {actual_fps} fps")
+        else:
+            self.get_logger().error(
+                f"Camera {camera_index} not available — running WITHOUT the camera "
+                f"(no frames/recording); will keep retrying.")
+            actual_width, actual_height, actual_fps = width, height, fps
 
         # ------------------------------------------------------------------
         # Recording state
         # ------------------------------------------------------------------
         self.output_dir = Path(self.get_parameter('output_directory').value)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            self.get_logger().error(
+                f"Cannot create output dir {self.output_dir} ({e}) — recording disabled.")
 
         fourcc_str = self.get_parameter('fourcc').value
         self.fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
@@ -123,6 +145,7 @@ class StellarHDCameraNode(Node):
         # ------------------------------------------------------------------
         # Capture thread
         # ------------------------------------------------------------------
+        self._reconnect_interval = max(1.0, self.get_parameter('reconnect_interval').value)
         self.running = True
         self.capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self.capture_thread.start()
@@ -196,6 +219,23 @@ class StellarHDCameraNode(Node):
     def _capture_loop(self):
         while self.running:
             try:
+                if self.cap is None or not self.cap.isOpened():
+                    # Camera absent — quietly retry at a long interval so a
+                    # missing camera doesn't spam the log.  The initial "not
+                    # available" error was already logged once at startup.
+                    try:
+                        self.cap = cv2.VideoCapture(self._camera_index, cv2.CAP_V4L2)
+                        if self.cap.isOpened():
+                            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._req_width)
+                            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._req_height)
+                            self.cap.set(cv2.CAP_PROP_FPS, self._req_fps)
+                            self.get_logger().info("Camera reconnected.")
+                    except Exception:
+                        pass
+                    if self.cap is None or not self.cap.isOpened():
+                        time.sleep(self._reconnect_interval)
+                    continue
+
                 ret, frame = self.cap.read()
                 if not ret:
                     # Back off so a disconnected camera doesn't busy-spin / log-spam
