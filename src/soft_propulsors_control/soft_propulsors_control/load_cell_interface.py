@@ -43,13 +43,18 @@ class LoadCellInterface(Node):
         self.declare_parameter('udp_port', 5005)
         self.declare_parameter('bind_address', '0.0.0.0')
         self.declare_parameter('rows', 6)            # incoming grid rows = F/T axes (Fx..Tz)
-        self.declare_parameter('cols', 20)           # incoming grid cols = samples per packet
+        self.declare_parameter('cols', 1000)         # incoming grid cols = samples per packet
+        # NOTE: this MUST exactly match LabVIEW's UDP packet size (rows*cols*4
+        # bytes) — _rx_loop drops any packet whose length differs at all, so a
+        # mismatch here doesn't degrade the data, it goes silent.  LabVIEW now
+        # sends 1000 samples/packet (6*1000*4 = 24000 bytes) at a 10 kHz sample
+        # rate (10 packets/s).  Change only if the LabVIEW side changes.
         self.declare_parameter('topic', 'load_cell_data')
         # Sensor sample rate (Hz): the 'cols' samples in each packet are
-        # 1/sample_rate apart in time (100 kHz → 10 µs between samples, so a
-        # 20-sample packet spans 200 µs).  Recorded as metadata for later
+        # 1/sample_rate apart in time (10 kHz → 100 µs between samples, so a
+        # 1000-sample packet spans 100 ms).  Recorded as metadata for later
         # per-sample time reconstruction; does not affect decoding.
-        self.declare_parameter('sample_rate', 100000.0)
+        self.declare_parameter('sample_rate', 10000.0)
 
         # Force/torque axis order within each 6-value sample (the incoming rows).
         self.AXES = ['Fx', 'Fy', 'Fz', 'Tx', 'Ty', 'Tz']

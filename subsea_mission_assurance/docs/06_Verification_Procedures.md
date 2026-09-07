@@ -1,5 +1,5 @@
 # Verification Procedures
-_Generated 2026-06-07 from model/verification.yaml._
+_Generated 2026-09-03 from model/verification.yaml._
 _Mark `status: pass|fail` in the model and regenerate. Tools per Round-5 confirmed set._
 
 ## VER-001 — verifies SYS-001 (Demonstration, high)

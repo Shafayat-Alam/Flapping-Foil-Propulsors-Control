@@ -1,5 +1,5 @@
 # Concept of Operations (ConOps)
-_Generated 2026-06-07 from model/conops.yaml._
+_Generated 2026-09-03 from model/conops.yaml._
 
 ## Operating environment
 

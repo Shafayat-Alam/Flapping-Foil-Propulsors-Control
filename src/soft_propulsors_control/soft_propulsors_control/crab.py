@@ -385,7 +385,16 @@ class CrabMissionDispatcher(Node):
         # Optional per-mission stroke + arrival + duration knobs; absent →
         # nominal (controller applies its own defaults, e.g. cycles = 1).
         for key in ('velocity', 'effort', 'distance', 'periods', 'cycles',
-                    'roll_effort', 'pitch_effort', 'pitch_phase', 'pshift'):
+                    'pitch_effort', 'heave_effort', 'pitch_phase', 'pshift',
+                    # direct paddle inputs (Hz / rad):
+                    'frequency', 'pitch_amp', 'heave_amp', 'phase', 'freq_ratio',
+                    'pitch_k',
+                    # harmonic shaping (see mc.harmonic_wave): a2 is the EVEN
+                    # harmonic that breaks +/- lobe symmetry, a3 the odd one
+                    # that only changes width, pitch_bias an angle-of-attack
+                    # offset that is an independent route to asymmetry.
+                    'p_a2', 'p_phi2', 'p_a3', 'h_a2', 'h_phi2', 'h_a3',
+                    'pitch_bias'):
             if key in tokens:
                 try:
                     mission[key] = float(tokens[key])
@@ -688,8 +697,17 @@ class CrabMissionDispatcher(Node):
         }
         # Forward only the fields this mission carries (kind-dependent + overrides).
         for key in ('target_tag_id', 'heading', 'velocity', 'effort', 'distance',
-                    'periods', 'cycles', 'roll_effort', 'pitch_effort', 'pitch_phase',
-                    'pshift', 'target_servo_id', 'drive_ids', 'drive_positions'):
+                    'periods', 'cycles', 'pitch_effort', 'heave_effort', 'pitch_phase',
+                    'pshift', 'target_servo_id', 'drive_ids', 'drive_positions',
+                    # direct paddle inputs (Hz / rad):
+                    'frequency', 'pitch_amp', 'heave_amp', 'phase', 'freq_ratio',
+                    'pitch_k',
+                    # harmonic shaping (see mc.harmonic_wave): a2 is the EVEN
+                    # harmonic that breaks +/- lobe symmetry, a3 the odd one
+                    # that only changes width, pitch_bias an angle-of-attack
+                    # offset that is an independent route to asymmetry.
+                    'p_a2', 'p_phi2', 'p_a3', 'h_a2', 'h_phi2', 'h_a3',
+                    'pitch_bias'):
             if key in mission:
                 payload[key] = mission[key]
         msg = String()

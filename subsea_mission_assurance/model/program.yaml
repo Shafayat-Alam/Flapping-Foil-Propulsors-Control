@@ -19,6 +19,9 @@ program:
     technical processes (stakeholder expectations -> requirements -> design ->
     integration -> verification -> validation) are retained but executed once,
     lightly, with emphasis on a working vehicle and objective V&V evidence.
+    This is a single-pass V-model: decomposition down the left arm,
+    integration/verification/validation back up the right, executed once
+    rather than iteratively (see vmodel below and 17_V_Model.md).
 
 # System-of-Interest boundary (Round 1: vehicle + operator + test environment)
 system_of_interest:
@@ -119,5 +122,40 @@ design_parameters:
   - {id: DP-BUOY,       name: "Buoyancy", value: "slightly negative (rests on pool floor when unpowered)"}
   - {id: DP-ENDUR,      name: "Endurance (max run)", value: 30, units: "min"}
   - {id: DP-RUNS,       name: "Validation runs", value: 30}
+
+# =====================================================================
+# vmodel — the program's lifecycle_tailoring, above, made structured.
+# Renders as 17_V_Model.md (Mermaid). left = decomposition (top to
+# bottom); right = integration/verification/validation (bottom to top,
+# mirrored against the matching left rung). apex_bottom is where the
+# two arms meet (the built vehicle); apex_top is where they meet again
+# (Operations), which is also where the recommission loop re-enters.
+# =====================================================================
+vmodel:
+  left:
+    - {id: V-L1, name: "Stakeholder Expectations", model_ref: "stakeholders.yaml",
+       docs: ["01_Stakeholder_Expectations.md"]}
+    - {id: V-L2, name: "Success Criteria", model_ref: "program.yaml (moes/mops)",
+       docs: ["02_MOE_MOP.md"]}
+    - {id: V-L3, name: "System Requirements", model_ref: "requirements.yaml",
+       docs: ["03_System_Requirements.md"]}
+    - {id: V-L4, name: "Architecture + Interfaces", model_ref: "architecture.yaml, interfaces_detail.yaml",
+       docs: ["04_Architecture.md", "10_Interface_Requirements.md", "11_Interface_Design.md", "12_ICD.md", "14_DSM.md"]}
+  apex_bottom: {id: V-BUILD, name: "Built Vehicle", note: "the real ROS2 stack"}
+  right:
+    - {id: V-R1, name: "Integration", model_ref: "integration.yaml",
+       docs: ["13_Integration_Plan.md"], mirrors: V-L4}
+    - {id: V-R2, name: "Verification", model_ref: "verification.yaml",
+       docs: ["06_Verification_Procedures.md", "16_Test_Strategy.md"], mirrors: V-L3}
+    - {id: V-R3, name: "Validation", model_ref: "conops.yaml (scenarios -> MOPs)",
+       docs: ["07_ConOps.md"], mirrors: V-L2}
+    - {id: V-R4, name: "Commissioning", model_ref: "conops.yaml (ORR)",
+       docs: ["15_Commissioning.md"], mirrors: V-L1}
+  apex_top: {id: V-OPS, name: "Operations", note: "PH-1..PH-6"}
+  recommission_trigger: "change to seals, wiring, firmware, gait gains, or calibration"
+  cross_cutting:
+    - {id: V-X1, name: "Risk Register", model_ref: "risks.yaml", docs: ["09_Risk_Register.md"]}
+    - {id: V-X2, name: "Software Safety", model_ref: "software_safety.yaml", docs: ["08_Software_Safety.md"]}
+    - {id: V-X3, name: "OPM", model_ref: "opm.yaml", docs: ["05_OPM_OPL.md"]}
 # NOTE: DP-TAG-SIZE (0.200) differs from the current code default
 # apriltag_interface tag_size=0.10 — implementation should be updated to match.

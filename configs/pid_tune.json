@@ -1,0 +1,23 @@
+{
+  "_comment": "In-water PID tune, servos 1(pitch)+2(heave), flipper on. Tunes all three (Kp->Kd->Ki); Ki is zeroed when written into the launch for the gait. Run from repo root: python3 scripts/pid_tuner.py --config configs/pid_tune.json --yes",
+  "outdir": "in_house_wet_test/PID",
+  "servo_ids": [1, 2],
+  "limits": {"1": 3.141592653589793, "2": 1.5707963267948966},
+  "center": 0.0,
+  "amp": 0.5,
+  "dwell": 1.5,
+  "n_edges": 6,
+  "rise_target_ms": 300.0,
+  "overshoot_trigger": 5.0,
+  "overshoot_tol": 2.0,
+  "sse_tol_deg": 0.5,
+  "kp_start": 200,
+  "kp_step": 100,
+  "kp_max": 3000,
+  "kd_step": 150,
+  "kd_max": 3000,
+  "ki_start": 50,
+  "ki_step": 50,
+  "ki_max": 2000,
+  "max_trials": 60
+}

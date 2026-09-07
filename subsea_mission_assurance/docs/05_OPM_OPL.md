@@ -1,5 +1,5 @@
 # OPM Model — Object-Process Language (OPL) + Diagram
-_Generated 2026-06-07 from model/opm.yaml (Object-Process Methodology, ISO 19450)._
+_Generated 2026-09-03 from model/opm.yaml (Object-Process Methodology, ISO 19450)._
 
 ## OPL — the model as sentences
 

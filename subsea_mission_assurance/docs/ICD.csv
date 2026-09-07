@@ -3,12 +3,12 @@ IF-MISIN,mission_input,C-OPC,C-CRAB,std_msgs/String,event (operator-driven),"dep
 IF-MISCMD,mission_cmd,C-CRAB,C-CTRL,std_msgs/String,event (per dispatch),"depth=10, RELIABLE",n/a (text),controller validates before acting,IRD-16
 IF-MISSTAT,mission_status,C-CTRL,C-CRAB,std_msgs/String,"on change, <= 5 Hz (STATUS_PERIOD 0.2 s)","depth=10 (pub) / depth=50 (crab sub), RELIABLE",n/a (text),idempotent; latest status wins,IRD-12
 IF-CFG,robot_config,C-CRAB,C-CTRL,std_msgs/String (latched),one-shot at startup (re-latched on change),"TRANSIENT_LOCAL, depth=1 (latched)",mixed (config fields),controller does not actuate until received (SYS-020),IRD-11
-IF-JCMD,joint_cmd,C-CTRL,C-DXLIF,std_msgs/Float32MultiArray,400 Hz produce [TBC]; applied to bus at 500 Hz hardware loop,"depth=1, RELIABLE (latest-only)",radians,out-of-range clamped; none published before config (SYS-020),IRD-01; IRD-02; IRD-03; IRD-04
-IF-JFB,joint_feedback,C-DXLIF,C-CTRL,std_msgs/Float32MultiArray,500 Hz hardware loop [TBC],"depth=1, RELIABLE (latest-only)",radians,controller tolerates dropped/late frames (IRD-06),IRD-05; IRD-06
+IF-JCMD,joint_cmd,C-CTRL,C-DXLIF,std_msgs/Float32MultiArray,200 Hz produce [TBC]; applied to bus at 100 Hz hardware loop,"depth=1, RELIABLE (latest-only)",radians,out-of-range clamped; none published before config (SYS-020),IRD-01; IRD-02; IRD-03; IRD-04
+IF-JFB,joint_feedback,C-DXLIF,C-CTRL,std_msgs/Float32MultiArray,100 Hz hardware loop [TBC],"depth=1, RELIABLE (latest-only)",radians,controller tolerates dropped/late frames (IRD-06),IRD-05; IRD-06
 IF-IMU,imu_data,C-IMUIF,C-CTRL,sensor_msgs/Imu,100 Hz [TBC] (sample_rate),"depth=10, RELIABLE","m/s^2, rad/s",loss of stream -> HOVERING fail-safe (SYS-016),IRD-10
 IF-TAG,apriltag_detections,C-APRIL,C-CTRL,std_msgs/Float32MultiArray,"30 Hz [TBC] (detect_rate, camera-bound)","depth=10, RELIABLE","m, rad",detections older than 0.5 s ignored (SYS-019),IRD-08; IRD-09
 IF-IMG,camera/image_raw,C-CAMIF,C-APRIL,sensor_msgs/Image,<= 15 Hz cap [TBC] (publish_rate),"depth=10, RELIABLE",pixels,camera interface is sole frame owner; drops frames above cap,IRD-07
 IF-TLM,telemetry,C-CTRL,C-OPC,std_msgs/Float32MultiArray,loop-paced,"depth=10, RELIABLE",mixed,lossy ok (monitoring only),IRD-17
-IF-RS485,servo bus (RS-485),C-COMPUTE,C-SERVO,RS-485 / U2D2 1 Mbaud,"1,000,000 baud; 500 Hz hardware loop",n/a (physical),protocol register values,comm result checked per packet; failed IDs logged,IRD-14
+IF-RS485,servo bus (RS-485),C-COMPUTE,C-SERVO,RS-485 / U2D2 1 Mbaud,"1,000,000 baud; 100 Hz hardware loop",n/a (physical),protocol register values,comm result checked per packet; failed IDs logged,IRD-14
 IF-I2C,IMU bus (I2C),C-COMPUTE,C-IMU,I2C 0x69,100 Hz sampling,n/a (physical),register values,read failure -> skip sample / log,IRD-15
 IF-USB,camera (USB),C-CAM,C-COMPUTE,USB UVC,camera native; capped on republish,n/a (physical),frames,capture thread join on shutdown; reconnect on loss,IRD-18

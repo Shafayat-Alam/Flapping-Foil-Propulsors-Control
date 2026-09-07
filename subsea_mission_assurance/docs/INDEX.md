@@ -1,11 +1,12 @@
 # Soft Propulsors UUV — Subsea Mission Assurance (Master Index)
-_Generated 2026-06-07. **Do not edit docs/** — edit `model/*.yaml`, then run `python3 tools/check.py && python3 tools/generate.py`._
+_Generated 2026-09-03. **Do not edit docs/** — edit `model/*.yaml`, then run `python3 tools/check.py && python3 tools/generate.py`._
 
 Model-based systems engineering (as code). Source of truth: `model/`. Health: **0 errors, 0 warnings**.
 
 | Area | Document | What it is |
 |---|---|---|
 | 0. Start here | [00_Model_Report.md](00_Model_Report.md) | Element counts, V&V policy, live consistency check |
+|  | [17_V_Model.md](17_V_Model.md) | The V-model — every rung, its model source, and its docs (Mermaid) |
 |  | [07_ConOps.md](07_ConOps.md) | Concept of Operations — environment, phases (PH-0..PH-6), scenarios |
 |  | [15_Commissioning.md](15_Commissioning.md) | Operational Readiness Review — the gate from integration to operations |
 | 1. Concept & needs | [01_Stakeholder_Expectations.md](01_Stakeholder_Expectations.md) | Stakeholders and their expectations |
@@ -35,7 +36,7 @@ Model-based systems engineering (as code). Source of truth: `model/`. Health: **
 
 ## Recommended reading order
 
-ConOps → Stakeholder Expectations → MOE/MOP → Requirements (+RTM) → Architecture → OPM → Verification procedures (+matrices, scenarios) → Software Safety → Risk Register → Model Report.
+V-Model (orientation) → ConOps → Stakeholder Expectations → MOE/MOP → Requirements (+RTM) → Architecture → OPM → Verification procedures (+matrices, scenarios) → Software Safety → Risk Register → Model Report.
 
 ## Regenerate
 ```bash

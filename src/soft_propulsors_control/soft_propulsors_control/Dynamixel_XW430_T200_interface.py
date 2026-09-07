@@ -36,6 +36,7 @@ Hardware is configured ONCE at startup. No reconfiguration during runtime.
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, DurabilityPolicy, HistoryPolicy
+from rcl_interfaces.msg import SetParametersResult
 from std_msgs.msg import Float32MultiArray, String
 from dynamixel_sdk import (
     PortHandler, PacketHandler, GroupSyncWrite, GroupSyncRead,
@@ -79,6 +80,7 @@ class DynamixelXW430Interface(Node):
     ADDR_POSITION_I_GAIN = 82
     ADDR_POSITION_P_GAIN = 84
     ADDR_HARDWARE_ERROR = 70
+    ADDR_VELOCITY_LIMIT = 44   # EEPROM, 4 bytes — hard slew cap (0.229 rev/min/unit, max 1023)
     ADDR_PROFILE_ACCELERATION = 108
     ADDR_PROFILE_VELOCITY = 112
     ADDR_GOAL_VELOCITY = 104
@@ -101,12 +103,12 @@ class DynamixelXW430Interface(Node):
     # independent of (and as a backstop to) the controller's software clamp.
     # Ticks: roll spans a full turn (0..2π → 0..4095), pitch a half turn
     # (0..π → 0..2048).  first servo in a set = roll, second = pitch.
-    ROLL_TICK_LIMITS  = (0, 4095)
-    PITCH_TICK_LIMITS = (0, 2048)
+    PITCH_TICK_LIMITS  = (0, 4095)
+    HEAVE_TICK_LIMITS = (0, 2048)
     # Set 1 pitch uses the same positive range as set 2 — this hardware rejects
     # a negative Min Position Limit in standard Position Control Mode, so the
     # reversal isn't done via negative positions.
-    PITCH_TICK_LIMITS_SET1 = PITCH_TICK_LIMITS
+    HEAVE_TICK_LIMITS_SET1 = HEAVE_TICK_LIMITS
 
     BAUD_MAP = {9600: 0, 57600: 1, 115200: 2, 1000000: 3, 2000000: 4, 3000000: 5, 4000000: 6, 4500000: 7}
     TICKS_PER_RAD    = 4096.0 / (2.0 * math.pi)
@@ -124,13 +126,24 @@ class DynamixelXW430Interface(Node):
         self.declare_parameter(
             'port', '/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FT9MIR5U-if00-port0')
         self.declare_parameter('baudrate', 1000000)
-        self.declare_parameter('hardware_rate', 50.0)
+        self.declare_parameter('hardware_rate', 100.0)
         self.declare_parameter('current_limit', 800)
         self.declare_parameter('servo_velocity_i_gain', 1920)
         self.declare_parameter('servo_velocity_p_gain', 100)
         self.declare_parameter('servo_position_d_gain', 0)
         self.declare_parameter('servo_position_i_gain', 0)
         self.declare_parameter('servo_position_p_gain', 900)
+        # Per-servo Position PID override, as a JSON map keyed by servo id, e.g.
+        #   '{"1": {"p": 950, "i": 0, "d": 400}, "2": {"p": 700, "d": 200}}'
+        # Any key omitted for a servo falls back to the scalar params above.
+        # Empty string = no overrides (all servos use the scalars).  This param
+        # is watched at runtime (see _on_set_params): setting it while the node
+        # is up re-writes the Position P/I/D Gain RAM registers live — no
+        # relaunch, torque stays on — which is how pid_tuner.py tunes gains.
+        self.declare_parameter('position_gain_overrides', '')
+        # Velocity Limit (register 44) is NOT written here — it's set by hand
+        # on the servo (Dynamixel Wizard).  This node trusts whatever the servo
+        # already has.
         # Caps Position Control Mode's point-to-point trajectory (raw register
         # units, 0 = unlimited/max speed — that's the current "snap to target
         # instantly" behaviour).  Small positive values make home_state/
@@ -180,6 +193,11 @@ class DynamixelXW430Interface(Node):
         self.is_configuring = False
         self.pos_sync_writer = None
         self.vel_sync_writer = None
+        # Set by the parameter callback when a Position-gain param changes; the
+        # hardware loop re-writes the gains at the top of its next cycle so the
+        # write happens in the loop's execution context (no port contention).
+        self._gains_dirty = False
+        self.add_on_set_parameters_callback(self._on_set_params)
 
         # crab broadcasts the actuator map on a latched topic; we read it only
         # for the servo id list, to auto-initialize hardware as soon as config
@@ -191,6 +209,7 @@ class DynamixelXW430Interface(Node):
             String, 'robot_config', self._config_cb, latched)
 
         self.joint_sub = self.create_subscription(Float32MultiArray, 'joint_cmd', self._cmd_cb, 1)
+
         self.feedback_pub = self.create_publisher(Float32MultiArray, 'joint_feedback', 1)
         self.diag_pub = self.create_publisher(Float32MultiArray, 'servo_diagnostics', 1)
 
@@ -291,9 +310,9 @@ class DynamixelXW430Interface(Node):
             for i, sid in enumerate(members):
                 if i == 1:   # pitch
                     self.position_tick_limits[sid] = (
-                        self.PITCH_TICK_LIMITS_SET1 if set_id == 1 else self.PITCH_TICK_LIMITS)
+                        self.HEAVE_TICK_LIMITS_SET1 if set_id == 1 else self.HEAVE_TICK_LIMITS)
                 else:        # roll
-                    self.position_tick_limits[sid] = self.ROLL_TICK_LIMITS
+                    self.position_tick_limits[sid] = self.PITCH_TICK_LIMITS
 
         if self.is_configured or self.is_configuring or not ids:
             return
@@ -311,6 +330,43 @@ class DynamixelXW430Interface(Node):
                 "servos once the port comes up.")
             return
         self._setup_hardware(ids, modes, self.get_parameter('baudrate').value)
+
+    def _resolve_gains(self, sid):
+        """(pos_p, pos_i, pos_d) for a servo: per-servo override if present in
+        position_gain_overrides, else the scalar servo_position_*_gain params."""
+        p = self.get_parameter('servo_position_p_gain').value
+        i = self.get_parameter('servo_position_i_gain').value
+        d = self.get_parameter('servo_position_d_gain').value
+        raw = self.get_parameter('position_gain_overrides').value
+        if raw:
+            try:
+                ov = json.loads(raw).get(str(sid), {})
+                p = int(ov.get('p', p)); i = int(ov.get('i', i)); d = int(ov.get('d', d))
+            except (ValueError, TypeError) as e:
+                self.get_logger().warn(f"bad position_gain_overrides ({e}); using scalars")
+        # X-series Position gains are 0..16383
+        clamp = lambda v: max(0, min(16383, int(v)))
+        return clamp(p), clamp(i), clamp(d)
+
+    def _apply_position_gains(self):
+        """Re-write Position P/I/D Gain (RAM) for every active servo, live.
+        Torque may stay on — these are RAM registers.  Called from the hardware
+        loop when a gain param changed."""
+        ph = self.packet_handler
+        for sid in self.active_ids:
+            p, i, d = self._resolve_gains(sid)
+            self._write_checked(ph.write2ByteTxRx, sid, self.ADDR_POSITION_P_GAIN, p, "position-p-gain")
+            self._write_checked(ph.write2ByteTxRx, sid, self.ADDR_POSITION_I_GAIN, i, "position-i-gain")
+            self._write_checked(ph.write2ByteTxRx, sid, self.ADDR_POSITION_D_GAIN, d, "position-d-gain")
+            self.get_logger().info(f"servo {sid} position gains -> P={p} I={i} D={d}")
+
+    def _on_set_params(self, params):
+        """Flag a live gain re-write whenever a Position-gain param is set."""
+        watched = {'servo_position_p_gain', 'servo_position_i_gain',
+                   'servo_position_d_gain', 'position_gain_overrides'}
+        if any(pm.name in watched for pm in params):
+            self._gains_dirty = True
+        return SetParametersResult(successful=True)
 
     def _cmd_cb(self, msg: Float32MultiArray):
         try:
@@ -340,6 +396,13 @@ class DynamixelXW430Interface(Node):
         if not self.is_configured:
             self._setup_hardware(ids, modes, self.get_parameter('baudrate').value)
             return
+
+        # Live gain re-write requested via a parameter change (pid_tuner.py).
+        # Done here, in the loop's context, so it never races the sync read/write
+        # on the shared serial port.
+        if self._gains_dirty:
+            self._gains_dirty = False
+            self._apply_position_gains()
 
         # Write phase
         for i, sid in enumerate(ids):
@@ -530,9 +593,6 @@ class DynamixelXW430Interface(Node):
         current_limit = self.get_parameter('current_limit').value
         vel_i = self.get_parameter('servo_velocity_i_gain').value
         vel_p = self.get_parameter('servo_velocity_p_gain').value
-        pos_d = self.get_parameter('servo_position_d_gain').value
-        pos_i = self.get_parameter('servo_position_i_gain').value
-        pos_p = self.get_parameter('servo_position_p_gain').value
         profile_vel = self.get_parameter('profile_velocity').value
         profile_accel = self.get_parameter('profile_acceleration').value
 
@@ -561,6 +621,9 @@ class DynamixelXW430Interface(Node):
                                     ctypes.c_uint32(min_tick).value, "min-position-limit")
 
             self._write_checked(ph.write2ByteTxRx, sid, self.ADDR_CURRENT_LIMIT, current_limit, "current-limit")
+            # Velocity Limit (register 44) intentionally NOT written — set on the
+            # servo via Wizard; this node leaves it untouched.
+            pos_p, pos_i, pos_d = self._resolve_gains(sid)   # per-servo override or scalar
             self._write_checked(ph.write2ByteTxRx, sid, self.ADDR_VELOCITY_I_GAIN, vel_i, "velocity-i-gain")
             self._write_checked(ph.write2ByteTxRx, sid, self.ADDR_VELOCITY_P_GAIN, vel_p, "velocity-p-gain")
             self._write_checked(ph.write2ByteTxRx, sid, self.ADDR_POSITION_D_GAIN, pos_d, "position-d-gain")
@@ -606,6 +669,15 @@ class DynamixelXW430Interface(Node):
         self._servo_lost = set()
         self.is_configured = True
         self.is_configuring = False
+        # Apply the Position P/I/D gains on the NEXT loop tick. They were only
+        # ever written on a live parameter change, so gains passed in at launch
+        # (position_gain_overrides in crab_launch.py) were declared and then
+        # never sent to the servo -- it ran on whatever its EEPROM defaults
+        # were, and the identified gains silently did nothing. Deferred to the
+        # loop rather than written here so it cannot race the sync read/write
+        # on the shared serial port; also covers the config replay after a
+        # port reopen, where the servo may have power-cycled its RAM.
+        self._gains_dirty = True
 
         self.get_logger().info("Hardware configuration complete.")
 

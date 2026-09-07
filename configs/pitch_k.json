@@ -1,0 +1,15 @@
+{
+  "_comment": "Pitch-k x pitch-frequency x phase sweep. Stops and prompts after EVERY phase sweep block. Run from repo root: python3 scripts/sweep_pitch_k.py --config configs/pitch_k.json",
+  "folder": "in_house_wet_test_pitch_k",
+  "pitch_amp": 0.6283185307,
+  "heave_amp": 0.6283185307,
+  "heave_freq": 0.5,
+  "cycles": 4,
+  "delay": 7.0,
+  "ph_start": 0.0,
+  "ph_inc": 0.261799,
+  "ph_n": 25,
+  "pitch_freq_start": 0.5,
+  "pitch_freq_inc": 0.25,
+  "pitch_ks": [1, 2, 4, 8, "inf"]
+}

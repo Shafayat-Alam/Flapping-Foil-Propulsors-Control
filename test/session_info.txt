@@ -1,0 +1,23 @@
+Session recording summary
+=========================
+exported_at : 2026-07-11T19:42:57
+bag         : test/bag_20260711_194201
+start       : 2026-07-11T19:42:02
+end         : 2026-07-11T19:42:53
+duration_s  : 51.5
+
+source                       type                                           rows
+--------------------------------------------------------------------------------
+/apriltag_detections         std_msgs/msg/Float32MultiArray                    0
+/events/write_split          rosbag2_interfaces/msg/WriteSplitEvent            0
+/joint_cmd                   std_msgs/msg/Float32MultiArray                 1088
+/joint_feedback              std_msgs/msg/Float32MultiArray                 4592
+/load_cell_data              std_msgs/msg/Float32MultiArray                    0
+/mission_cmd                 std_msgs/msg/String                               2
+/mission_input               std_msgs/msg/String                               0
+/mission_status              std_msgs/msg/String                             229
+/parameter_events            rcl_interfaces/msg/ParameterEvent                 0
+/robot_config                std_msgs/msg/String                               1
+/rosout                      rcl_interfaces/msg/Log                           48
+/servo_diagnostics           std_msgs/msg/Float32MultiArray                 4592
+/telemetry                   std_msgs/msg/Float32MultiArray                 1088

@@ -1,14 +1,14 @@
 # Interface Requirements Document (IRD)
-_Generated 2026-06-07 from model/interfaces_detail.yaml._
+_Generated 2026-09-03 from model/interfaces_detail.yaml._
 _Baseline 0.1 (draft) (draft). `[TBC]` = derived from the ROS code, not yet ratified._
 
 | ID | Interface | Category | Requirement | Value | TBC | Verifies via | Status |
 |---|---|---|---|---|---|---|---|
-| IRD-01 | IF-JCMD (joint_cmd) | timing | The controller shall publish a complete joint-position command vector at the configured control rate (default 400 Hz). | 400 Hz [TBC] (controller _control_loop timer) | yes | VER-017 | draft |
+| IRD-01 | IF-JCMD (joint_cmd) | timing | The controller shall publish a complete joint-position command vector at the configured control rate (default 200 Hz). | 200 Hz [TBC] (controller _control_loop timer) | yes | VER-017 | draft |
 | IRD-02 | IF-JCMD (joint_cmd) | data | The joint_cmd payload shall be a Float32 vector of joint positions in radians, ordered by the latched actuator map, one element per active joint. | Float32MultiArray; rad; actuator-map order | — | VER-020 | draft |
 | IRD-03 | IF-JCMD (joint_cmd) | error | Every joint_cmd element shall be clamped to the joint's configured mechanical min/max before it is published. | clamp to [min,max] per joint | — | VER-017 | draft |
 | IRD-04 | IF-JCMD (joint_cmd) | ordering | No joint_cmd shall be published before the latched robot_config has been received. | config-before-actuation gate | — | VER-020 | draft |
-| IRD-05 | IF-JFB (joint_feedback) | timing | The Dynamixel interface shall publish joint_feedback at the hardware loop rate (default 500 Hz), latest-sample-only. | 500 Hz [TBC], QoS depth=1 (Dynamixel hardware loop) | yes | — | draft |
+| IRD-05 | IF-JFB (joint_feedback) | timing | The Dynamixel interface shall publish joint_feedback at the hardware loop rate (default 100 Hz), latest-sample-only. | 100 Hz [TBC], QoS depth=1 (Dynamixel hardware loop) | yes | — | draft |
 | IRD-06 | IF-JFB (joint_feedback) | error | The controller shall tolerate missing or late joint_feedback frames without commanding an uncommanded manoeuvre. | graceful-degradation | — | VER-016 | draft |
 | IRD-07 | IF-IMG (camera/image_raw) | timing | The camera interface shall republish frames at no more than the configured cap (default 15 Hz). | <= 15 Hz [TBC] (stellarhd publish_rate cap) | yes | — | draft |
 | IRD-08 | IF-TAG (apriltag_detections) | timing | AprilTag detections shall be produced at the detector rate (default 30 Hz) and carry a timestamp. | 30 Hz [TBC] + per-message stamp (apriltag detect_rate) | yes | — | draft |
@@ -25,7 +25,7 @@ _Baseline 0.1 (draft) (draft). `[TBC]` = derived from the ROS code, not yet rati
 
 ## Rationale
 
-- **IRD-01** (IF-JCMD): A 1 Hz flapping stroke must be well oversampled for smooth gait; the servo bus applies commands at 500 Hz.
+- **IRD-01** (IF-JCMD): A 1 Hz flapping stroke must be well oversampled for smooth gait; the servo bus applies commands at 100 Hz.
 - **IRD-02** (IF-JCMD): Deterministic element order is required so the right command reaches the right servo (SYS-020).
 - **IRD-03** (IF-JCMD): Prevents the worst credible software mishap — hardware self-damage from an out-of-limit command (SYS-017).
 - **IRD-04** (IF-JCMD): Actuating before the actuator map is known could drive the wrong joint (SYS-020).

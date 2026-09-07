@@ -1,5 +1,5 @@
 # Software Safety Analysis (NASA-GB-8719.13)
-_Generated 2026-06-07 from model/software_safety.yaml._
+_Generated 2026-09-03 from model/software_safety.yaml._
 
 ## Determination
 

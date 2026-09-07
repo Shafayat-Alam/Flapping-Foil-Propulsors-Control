@@ -1,0 +1,22 @@
+{
+  "_comment": "Lift-based optimal-curve experiment, in water. Run from repo root: python3 find_optimal_curve.py --config configs/find_lift.json",
+  "folder": "in_house_wet_test/lift",
+  "style": "lift",
+  "cycles": 4,
+  "delay": 7.0,
+  "pitch_amp": 0.39269908169872414,
+  "heave_amp": 0.39269908169872414,
+  "frequency": 0.5,
+  "ph_start": 0.0,
+  "ph_inc": 0.2617993877991494,
+  "ph_n": 25,
+  "pitch_start": 0.17453292519943295,
+  "pitch_inc": 0.17453292519943295,
+  "pitch_n": 18,
+  "heave_start": 0.17453292519943295,
+  "heave_inc": 0.08726646259971647,
+  "heave_n": 17,
+  "freq_fixed_step": true,
+  "freq_start": 0.25,
+  "freq_inc": 0.25
+}

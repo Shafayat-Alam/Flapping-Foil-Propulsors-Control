@@ -55,8 +55,10 @@ _LOADCELL_COL = re.compile(r'^s(\d+)_(' + '|'.join(LOADCELL_AXES) + r')$')
 FB_STRIDE = 6
 
 KNOWN_CMD_KEYS = [
-    'kind', 'label', 'velocity', 'effort', 'roll_effort', 'pitch_effort',
-    'pitch_phase', 'pshift', 'cycles', 'periods', 'distance', 'heading',
+    'kind', 'label', 'frequency', 'pitch_amp', 'heave_amp', 'phase', 'freq_ratio',
+    'pitch_k', 'cycles', 'periods', 'distance', 'heading',
+    # legacy velocity/effort format — still read back from old sessions
+    'velocity', 'effort', 'roll_effort', 'pitch_effort', 'pitch_phase', 'pshift',
     'target_tag_id', 'target_servo_id', 'max_retries',
 ]
 
@@ -136,6 +138,22 @@ def _loadcell_samples(row):
     if samples:
         return samples
 
+    # Blob format: record_session stores an oversized grid as a compact JSON
+    # list in the 'data' column (sample-major, 6 axes per sample).
+    blob = row.get('data')
+    if blob:
+        try:
+            vals = json.loads(blob)
+        except (ValueError, TypeError):
+            vals = None
+        if vals:
+            n = len(LOADCELL_AXES)
+            for i in range(len(vals) // n):
+                samples[i] = dict(zip(LOADCELL_AXES,
+                                      [_num(vals[i * n + j]) for j in range(n)]))
+            if samples:
+                return samples
+
     # Fallback: raw data.N, 6 axes per sample in LOADCELL_AXES order.
     i = 0
     while f'data.{i * 6}' in row:
@@ -148,8 +166,12 @@ def _loadcell_samples(row):
 
 
 def _derive_freq(params, pitch_max_amp):
-    """Gait frequency (Hz) from commanded peak velocity, as the controller does:
-    freq = peak_stroke_rate / (2π · pitch_max_amp)."""
+    """Gait frequency (Hz).  Commands now carry it directly; the velocity
+    derivation (freq = peak_stroke_rate / (2π · pitch_max_amp)) is kept only
+    to read back sessions recorded under the old velocity/effort format."""
+    f = params.get('frequency')
+    if isinstance(f, (int, float)):
+        return float(f)
     vel = params.get('velocity')
     if isinstance(vel, (int, float)) and pitch_max_amp > 0:
         return float(vel) / (2.0 * math.pi * pitch_max_amp)
@@ -291,9 +313,21 @@ def _write_loadcell(seg, folder, safe, loadcell_rate):
         w = csv.DictWriter(f, fieldnames=header, extrasaction='ignore')
         w.writeheader()
         for p_idx, (t_ns, samples) in enumerate(lc):
-            for s_idx in sorted(samples):
+            s_idxs = sorted(samples)
+            n = len(s_idxs)
+            # Space this packet's samples evenly across the ACTUAL interval to
+            # the next packet, so times stay monotonic.  Fixed 1/loadcell_rate
+            # spacing overlapped (packets arrive faster than n_samples/rate),
+            # which put samples back-in-time at every boundary and scrambled the
+            # downstream harmonic analysis.  Last packet falls back to the rate.
+            if (p_idx + 1 < len(lc) and lc[p_idx + 1][0] is not None
+                    and t_ns is not None and n > 0):
+                step = (lc[p_idx + 1][0] - t_ns) / n
+            else:
+                step = dt * 1e9
+            for k, s_idx in enumerate(s_idxs):
                 axes = samples[s_idx]
-                t_sample = (t_ns or 0) + s_idx * dt * 1e9
+                t_sample = (t_ns or 0) + k * step
                 row = {
                     'time_s': '' if t0 is None else round((t_sample - t0) / 1e9, 9),
                     'bag_time_s': round(t_sample / 1e9, 9),
@@ -318,9 +352,9 @@ def main():
     ap.add_argument('--pitch-max-amp', type=float, default=math.pi / 2,
                     help="pitch max amplitude to derive gait frequency from velocity "
                          "(match the controller's pitch_limit; default π/2)")
-    ap.add_argument('--loadcell-rate', type=float, default=100000.0,
+    ap.add_argument('--loadcell-rate', type=float, default=10000.0,
                     help="load-cell sample rate (Hz) for per-sample time within a "
-                         "packet (match the node's sample_rate; default 100000)")
+                         "packet (match the node's sample_rate; default 10000)")
     args = ap.parse_args()
 
     split(_resolve_csv(args.session), args.base_dir, args.pitch_max_amp,

@@ -1,5 +1,5 @@
 # Integration & Verification Plan
-_Generated 2026-06-07 from model/integration.yaml._
+_Generated 2026-09-03 from model/integration.yaml._
 
 - **Strategy:** Incremental, bottom-up, with dry -> wet stage gates.
 - **Method:** DSM-sequenced. Coupled clusters (control feedback loops) are integrated as a block, not piecewise.

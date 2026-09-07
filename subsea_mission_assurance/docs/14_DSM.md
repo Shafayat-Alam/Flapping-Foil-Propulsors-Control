@@ -1,5 +1,5 @@
 # Design Structure Matrix (DSM)
-_Generated 2026-06-07 — computed from the interface coupling in architecture.yaml._
+_Generated 2026-09-03 — computed from the interface coupling in architecture.yaml._
 
 Cell **X** at row _R_, column _C_ means **R receives from / depends on C** (an interface flows C→R). Marks below the diagonal = forward flow; marks above = feedback.
 

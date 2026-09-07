@@ -1,5 +1,5 @@
 # Architecture
-_Generated 2026-06-07._
+_Generated 2026-09-03._
 
 ## Component tree
 

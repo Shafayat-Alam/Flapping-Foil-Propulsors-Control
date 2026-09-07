@@ -1,5 +1,5 @@
 # Interface Control Document (ICD)
-_Generated 2026-06-07. The controlled baseline: merges IRD + IDD per interface._
+_Generated 2026-09-03. The controlled baseline: merges IRD + IDD per interface._
 
 - **Baseline:** 0.1 (draft) (draft)
 - **Control authority:** PI
@@ -49,11 +49,11 @@ _Generated 2026-06-07. The controlled baseline: merges IRD + IDD per interface._
 **C-CTRL (controller (execution engine)) → C-DXLIF (dynamixel interface)**  ·  ros_topic · `std_msgs/Float32MultiArray`
 
 - Direction: C-CTRL -> C-DXLIF (command)
-- Encoding: std_msgs/Float32MultiArray — joint positions, actuator-map order  ·  Rate: 400 Hz produce [TBC]; applied to bus at 500 Hz hardware loop  ·  QoS: depth=1, RELIABLE (latest-only)
+- Encoding: std_msgs/Float32MultiArray — joint positions, actuator-map order  ·  Rate: 200 Hz produce [TBC]; applied to bus at 100 Hz hardware loop  ·  QoS: depth=1, RELIABLE (latest-only)
 - Units/Range: radians / per-joint mechanical [min,max], clamped (SYS-017)
 - Error handling: out-of-range clamped; none published before config (SYS-020)
 - Requirements:
-    - **IRD-01** (timing): The controller shall publish a complete joint-position command vector at the configured control rate (default 400 Hz). _[TBC]_
+    - **IRD-01** (timing): The controller shall publish a complete joint-position command vector at the configured control rate (default 200 Hz). _[TBC]_
     - **IRD-02** (data): The joint_cmd payload shall be a Float32 vector of joint positions in radians, ordered by the latched actuator map, one element per active joint.
     - **IRD-03** (error): Every joint_cmd element shall be clamped to the joint's configured mechanical min/max before it is published.
     - **IRD-04** (ordering): No joint_cmd shall be published before the latched robot_config has been received.
@@ -62,11 +62,11 @@ _Generated 2026-06-07. The controlled baseline: merges IRD + IDD per interface._
 **C-DXLIF (dynamixel interface) → C-CTRL (controller (execution engine))**  ·  ros_topic · `std_msgs/Float32MultiArray`
 
 - Direction: C-DXLIF -> C-CTRL (feedback)
-- Encoding: std_msgs/Float32MultiArray — present joint positions  ·  Rate: 500 Hz hardware loop [TBC]  ·  QoS: depth=1, RELIABLE (latest-only)
+- Encoding: std_msgs/Float32MultiArray — present joint positions  ·  Rate: 100 Hz hardware loop [TBC]  ·  QoS: depth=1, RELIABLE (latest-only)
 - Units/Range: radians / joint travel
 - Error handling: controller tolerates dropped/late frames (IRD-06)
 - Requirements:
-    - **IRD-05** (timing): The Dynamixel interface shall publish joint_feedback at the hardware loop rate (default 500 Hz), latest-sample-only. _[TBC]_
+    - **IRD-05** (timing): The Dynamixel interface shall publish joint_feedback at the hardware loop rate (default 100 Hz), latest-sample-only. _[TBC]_
     - **IRD-06** (error): The controller shall tolerate missing or late joint_feedback frames without commanding an uncommanded manoeuvre.
 
 ## IF-IMU — imu_data
@@ -114,7 +114,7 @@ _Generated 2026-06-07. The controlled baseline: merges IRD + IDD per interface._
 **C-COMPUTE (Jetson Orin Nano) → C-SERVO (Dynamixel XW430-T200 x4)**  ·  physical · `RS-485 / U2D2 1 Mbaud`
 
 - Direction: C-COMPUTE -> C-SERVO (actuation bus)
-- Encoding: Dynamixel Protocol 2.0 frames (sync/bulk read+write)  ·  Rate: 1,000,000 baud; 500 Hz hardware loop  ·  QoS: n/a (physical)
+- Encoding: Dynamixel Protocol 2.0 frames (sync/bulk read+write)  ·  Rate: 1,000,000 baud; 100 Hz hardware loop  ·  QoS: n/a (physical)
 - Units/Range: protocol register values / 4 servo IDs
 - Error handling: comm result checked per packet; failed IDs logged
 - Requirements:

@@ -1,5 +1,5 @@
 # Test Strategy — model→reality ladder & automation
-_Generated 2026-06-07 from model/verification.yaml._
+_Generated 2026-09-03 from model/verification.yaml._
 
 **Principle:** Automate as far left on the ladder as the requirement allows; reserve water for what only reality can close.
 

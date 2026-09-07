@@ -1,5 +1,5 @@
 # System Requirements
-_Generated 2026-06-07 from model/requirements.yaml._
+_Generated 2026-09-03 from model/requirements.yaml._
 
 ## Electrical
 

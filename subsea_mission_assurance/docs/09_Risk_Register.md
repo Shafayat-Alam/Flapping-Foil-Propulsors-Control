@@ -1,5 +1,5 @@
 # Technical Risk Register
-_Generated 2026-06-07 from model/risks.yaml._
+_Generated 2026-09-03 from model/risks.yaml._
 
 - **Scale:** 5x5. Score = Likelihood x Consequence. Bands: Low <= 4, Medium 5-11, High >= 12.
 - **Appetite:** NONE. All risks shall be mitigated to Low residual before any powered in-water operation.

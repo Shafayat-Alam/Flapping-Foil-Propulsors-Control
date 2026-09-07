@@ -1,5 +1,5 @@
 # Commissioning — Operational Readiness Review (ORR)
-_Generated 2026-06-07 from model/conops.yaml._
+_Generated 2026-09-03 from model/conops.yaml._
 
 - **Authority:** PI declares readiness; Safety Observer (ACT-SAF) concurs before the first operational mission.
 - **Gate:** Operational Readiness Review (ORR). The vehicle is NOT cleared for operational (autonomous, untethered, full-depth) missions until every checklist item has objective evidence and all technical risks sit at Low residual (appetite = NONE).

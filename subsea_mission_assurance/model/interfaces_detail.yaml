@@ -35,10 +35,10 @@ interface_requirements:
   - id: IRD-01
     interface: IF-JCMD
     category: timing
-    text: "The controller shall publish a complete joint-position command vector at the configured control rate (default 400 Hz)."
-    value: "400 Hz [TBC] (controller _control_loop timer)"
+    text: "The controller shall publish a complete joint-position command vector at the configured control rate (default 200 Hz)."
+    value: "200 Hz [TBC] (controller _control_loop timer)"
     tbc: true
-    rationale: "A 1 Hz flapping stroke must be well oversampled for smooth gait; the servo bus applies commands at 500 Hz."
+    rationale: "A 1 Hz flapping stroke must be well oversampled for smooth gait; the servo bus applies commands at 100 Hz."
     verification: VER-017
     status: draft
   - id: IRD-02
@@ -73,8 +73,8 @@ interface_requirements:
   - id: IRD-05
     interface: IF-JFB
     category: timing
-    text: "The Dynamixel interface shall publish joint_feedback at the hardware loop rate (default 500 Hz), latest-sample-only."
-    value: "500 Hz [TBC], QoS depth=1 (Dynamixel hardware loop)"
+    text: "The Dynamixel interface shall publish joint_feedback at the hardware loop rate (default 100 Hz), latest-sample-only."
+    value: "100 Hz [TBC], QoS depth=1 (Dynamixel hardware loop)"
     tbc: true
     rationale: "The controller needs fresh joint state; only the latest sample matters, so depth=1."
     status: draft
@@ -243,16 +243,16 @@ interface_design:
   - id: IF-JCMD
     direction: "C-CTRL -> C-DXLIF (command)"
     encoding: "std_msgs/Float32MultiArray — joint positions, actuator-map order"
-    rate: "400 Hz produce [TBC]; applied to bus at 500 Hz hardware loop"
+    rate: "200 Hz produce [TBC]; applied to bus at 100 Hz hardware loop"
     qos: "depth=1, RELIABLE (latest-only)"
     units: "radians"
     range: "per-joint mechanical [min,max], clamped (SYS-017)"
     error_handling: "out-of-range clamped; none published before config (SYS-020)"
-    source: "controller.py:172,176; Dynamixel_XW430_T200_interface.py:97,100-101"
+    source: "crab_launch.py:89-92; controller.py:172,176; Dynamixel_XW430_T200_interface.py:97,100-101"
   - id: IF-JFB
     direction: "C-DXLIF -> C-CTRL (feedback)"
     encoding: "std_msgs/Float32MultiArray — present joint positions"
-    rate: "500 Hz hardware loop [TBC]"
+    rate: "100 Hz hardware loop [TBC]"
     qos: "depth=1, RELIABLE (latest-only)"
     units: "radians"
     range: "joint travel"
@@ -297,7 +297,7 @@ interface_design:
   - id: IF-RS485
     direction: "C-COMPUTE -> C-SERVO (actuation bus)"
     encoding: "Dynamixel Protocol 2.0 frames (sync/bulk read+write)"
-    rate: "1,000,000 baud; 500 Hz hardware loop"
+    rate: "1,000,000 baud; 100 Hz hardware loop"
     qos: "n/a (physical)"
     units: "protocol register values"
     range: "4 servo IDs"

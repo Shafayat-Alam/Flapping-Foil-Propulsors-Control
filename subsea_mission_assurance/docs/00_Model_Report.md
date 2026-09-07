@@ -1,5 +1,5 @@
 # Model Report — Soft Propulsors UUV
-_Generated 2026-06-07._
+_Generated 2026-09-03._
 
 ## Element counts
 
@@ -42,6 +42,7 @@ _Generated 2026-06-07._
 - `14_DSM.md`
 - `15_Commissioning.md`
 - `16_Test_Strategy.md`
+- `17_V_Model.md`
 - `Commissioning_Checklist.csv`
 - `DSM.csv`
 - `ICD.csv`
@@ -53,4 +54,5 @@ _Generated 2026-06-07._
 - `Risk_Register.csv`
 - `Scenario_Traceability_Matrix.csv`
 - `Software_Hazard_Matrix.csv`
+- `V_Model_Diagram.svg`
 - `Verification_Matrix.csv`

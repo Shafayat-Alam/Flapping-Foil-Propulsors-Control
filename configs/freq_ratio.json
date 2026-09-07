@@ -1,0 +1,14 @@
+{
+  "_comment": "Pitch-frequency x phase sweep, heave frequency held constant. Run from repo root: python3 scripts/sweep_freq_ratio.py --config configs/freq_ratio.json",
+  "folder": "in_house_wet_test_freq_ratio",
+  "pitch_amp": 0.392699082,
+  "heave_amp": 0.392699082,
+  "heave_freq": 0.5,
+  "cycles": 4,
+  "delay": 7.0,
+  "ph_start": 0.0,
+  "ph_inc": 0.261799,
+  "ph_n": 25,
+  "pitch_freq_start": 0.5,
+  "pitch_freq_inc": 0.25
+}

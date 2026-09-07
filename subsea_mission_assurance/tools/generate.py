@@ -598,6 +598,135 @@ def main():
             s.append(f"Activities: {', '.join(hil.get('activities', []) or [])}")
         w(os.path.join(d, '16_Test_Strategy.md'), "\n".join(s))
 
+    # ---- 17 V-Model (real diagonal SVG, built from program.yaml's vmodel) ----
+    vm = m.get('vmodel', {})
+    if vm:
+        left = vm.get('left', [])
+        right = vm.get('right', [])
+        ab = vm.get('apex_bottom', {})
+        at = vm.get('apex_top', {})
+        xcut = vm.get('cross_cutting', [])
+
+        # ---- geometry: real diagonal lines, not a Mermaid rank layout ----
+        TOP_Y, APEX_Y = 140, 470
+        LEFT_X0, RIGHT_X1, CX = 90, 970, 530
+        BOX_W, BOX_H = 176, 40
+
+        def pos_left(i, n):
+            t = (i + 1) / (n + 1)
+            return LEFT_X0 + t * (CX - LEFT_X0), TOP_Y + t * (APEX_Y - TOP_Y)
+
+        def pos_right(i, n):
+            t = (i + 1) / (n + 1)
+            return CX + t * (RIGHT_X1 - CX), APEX_Y - t * (APEX_Y - TOP_Y)
+
+        Lp = [pos_left(i, len(left)) for i in range(len(left))]
+        Rp = [pos_right(i, len(right)) for i in range(len(right))]
+        apex_bottom_p = (CX, APEX_Y)
+        apex_top_p = (CX, 78)
+
+        def esc(t):
+            return (t.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
+
+        def box(x, y, label, sub='', fill='#FFFFFF', stroke='#B9C4C2'):
+            lx, ly = x - BOX_W / 2, y - BOX_H / 2
+            out = [f'<rect x="{lx:.1f}" y="{ly:.1f}" width="{BOX_W}" height="{BOX_H}" rx="4" '
+                   f'fill="{fill}" stroke="{stroke}" stroke-width="1.3"/>']
+            out.append(f'<text x="{x:.1f}" y="{y-3:.1f}" text-anchor="middle" '
+                       f'font-family="Helvetica,Arial,sans-serif" font-size="11.5" '
+                       f'font-weight="600" fill="#16232B">{esc(label)}</text>')
+            if sub:
+                out.append(f'<text x="{x:.1f}" y="{y+12:.1f}" text-anchor="middle" '
+                           f'font-family="Helvetica,Arial,sans-serif" font-size="9.5" '
+                           f'fill="#71807F">{esc(sub)}</text>')
+            return "\n".join(out)
+
+        def line(x1, y1, x2, y2, color="#5C6B6E", dash=None, arrow=True, w_=1.4):
+            d = f' stroke-dasharray="{dash}"' if dash else ''
+            mk = ' marker-end="url(#vArrow)"' if arrow else ''
+            return f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" stroke="{color}" stroke-width="{w_}"{d}{mk}/>'
+
+        svg = ['<svg viewBox="0 0 1060 560" xmlns="http://www.w3.org/2000/svg" '
+              'role="img" aria-label="V-model: decomposition descends the left arm from '
+              'stakeholder expectations to architecture, meets the built vehicle at the bottom, '
+              'then integration, verification, and validation ascend the right arm to operations, '
+              'which loops back to a model edit on any hardware or firmware change.">',
+              '<defs><marker id="vArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" '
+              'markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5C6B6E"/></marker>',
+              '<marker id="vArrowAmber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" '
+              'markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#B5651D"/></marker></defs>',
+              '<rect x="0" y="0" width="1060" height="560" fill="#F7F9F8"/>']
+
+        # spine: left descending through the apex, then right ascending
+        chain = [(LEFT_X0, TOP_Y - 20)] + Lp + [apex_bottom_p] + Rp + [(RIGHT_X1, TOP_Y - 20)]
+        for (x1, y1), (x2, y2) in zip(chain[:-1], chain[1:]):
+            svg.append(line(x1, y1, x2, y2, arrow=False, w_=1.1))
+
+        # apex_top sits above the chain; teal edges connect both ends to it
+        if at:
+            svg.append(line(RIGHT_X1, TOP_Y - 20, *apex_top_p, color="#0E6E77"))
+            svg.append(line(*apex_top_p, LEFT_X0, TOP_Y - 20, color="#0E6E77"))
+        if ab:
+            svg.append(box(*apex_bottom_p, ab.get('name', ''), ab.get('note', ''),
+                           fill="#EFF3F2", stroke="#16232B"))
+        if at:
+            svg.append(box(*apex_top_p, at.get('name', ''), at.get('note', ''), fill="#E4F0EF", stroke="#0E6E77"))
+
+        # recommission loop, amber, arcing above everything
+        if at and left:
+            trig = vm.get('recommission_trigger', 'change')
+            x0, y0 = apex_top_p
+            x1, y1 = Lp[0]
+            svg.append(f'<path d="M {x0-40},{y0-8} C {x0-260},{y0-52} {x1+120},{y1-70} {x1+10},{y1-24}" '
+                      f'fill="none" stroke="#B5651D" stroke-width="1.4" stroke-dasharray="5,4" '
+                      f'marker-end="url(#vArrowAmber)"/>')
+            svg.append(f'<text x="{(x0+x1)/2:.1f}" y="{min(y0,y1)-46:.1f}" text-anchor="middle" '
+                      f'font-family="Helvetica,Arial,sans-serif" font-size="10.5" fill="#B5651D">'
+                      f'recommission: {esc(trig)}</text>')
+
+        for (x, y), rung in zip(Lp, left):
+            svg.append(box(x, y, rung['name'], rung.get('model_ref', '')))
+        for (x, y), rung in zip(Rp, right):
+            svg.append(box(x, y, rung['name'], rung.get('model_ref', '')))
+
+        svg.append(f'<text x="{(LEFT_X0+CX)/2:.1f}" y="{APEX_Y+30:.1f}" text-anchor="middle" '
+                  f'font-family="Helvetica,Arial,sans-serif" font-size="10.5" letter-spacing="1.5" '
+                  f'fill="#71807F">DECOMPOSITION</text>')
+        svg.append(f'<text x="{(CX+RIGHT_X1)/2:.1f}" y="{APEX_Y+30:.1f}" text-anchor="middle" '
+                  f'font-family="Helvetica,Arial,sans-serif" font-size="10.5" letter-spacing="1.5" '
+                  f'fill="#71807F">INTEGRATION + VERIFICATION</text>')
+        svg.append('</svg>')
+        w(os.path.join(d, 'V_Model_Diagram.svg'), "\n".join(svg))
+
+        s = ["# V-Model", f"_Generated {stamp} from model/program.yaml (vmodel)._\n",
+             "Decomposition down the left arm; integration, verification, and "
+             "validation back up the right, mirrored rung for rung; the two arms "
+             "meet at the built vehicle and again at Operations. The dashed amber "
+             "edge is the one loop back into the V.\n",
+             "![V-Model diagram](V_Model_Diagram.svg)\n"]
+
+        if xcut:
+            s.append("## Cross-cutting (not a rung, referenced from multiple levels)\n")
+            for x in xcut:
+                s.append(f"- **{x['name']}** — `{x['model_ref']}` -> "
+                         f"{', '.join(f'`{d}`' for d in x.get('docs', []))}")
+            s.append("")
+
+        s.append("## Rung -> model -> docs\n")
+        s.append("| Side | Rung | Model source | Docs |")
+        s.append("|---|---|---|---|")
+        for rung in left:
+            s.append(f"| left | {rung['name']} | `{rung['model_ref']}` | "
+                     f"{', '.join(f'`{d}`' for d in rung.get('docs', []))} |")
+        if ab:
+            s.append(f"| apex | {ab['name']} | _{ab.get('note','')}_ | — |")
+        for rung in right:
+            s.append(f"| right | {rung['name']} | `{rung['model_ref']}` | "
+                     f"{', '.join(f'`{d}`' for d in rung.get('docs', []))} |")
+        if at:
+            s.append(f"| apex | {at['name']} | _{at.get('note','')}_ | — |")
+        w(os.path.join(d, '17_V_Model.md'), "\n".join(s))
+
     # ---- 00 Model Report (counts + live check results) ----
     errors, warnings = checker.run()
     counts = {k: len(m.get(k, [])) for k in
@@ -631,6 +760,7 @@ def main():
     groups = [
         ("0. Start here", [
             ("00_Model_Report.md", "Element counts, V&V policy, live consistency check"),
+            ("17_V_Model.md", "The V-model — every rung, its model source, and its docs (Mermaid)"),
             ("07_ConOps.md", "Concept of Operations — environment, phases (PH-0..PH-6), scenarios"),
             ("15_Commissioning.md", "Operational Readiness Review — the gate from integration to operations")]),
         ("1. Concept & needs", [
@@ -673,9 +803,9 @@ def main():
         for i, (fn, desc) in enumerate(items):
             ix.append(f"| {title if i == 0 else ''} | [{fn}]({fn}) | {desc} |")
     ix.append("\n## Recommended reading order\n")
-    ix.append("ConOps → Stakeholder Expectations → MOE/MOP → Requirements (+RTM) → "
-              "Architecture → OPM → Verification procedures (+matrices, scenarios) → "
-              "Software Safety → Risk Register → Model Report.\n")
+    ix.append("V-Model (orientation) → ConOps → Stakeholder Expectations → MOE/MOP → "
+              "Requirements (+RTM) → Architecture → OPM → Verification procedures "
+              "(+matrices, scenarios) → Software Safety → Risk Register → Model Report.\n")
     ix.append("## Regenerate\n```bash\npython3 tools/check.py      # consistency gate\n"
               "python3 tools/generate.py   # rebuild every view\n```")
     w(os.path.join(d, 'INDEX.md'), "\n".join(ix))

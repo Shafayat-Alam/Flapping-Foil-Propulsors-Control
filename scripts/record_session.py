@@ -53,9 +53,14 @@ from datetime import datetime
 
 STATUS_TOPIC = 'mission_status'
 
-# Sequences longer than this are summarised (e.g. raw image data) as a `.len`
-# column instead of being expanded into thousands of cells.
+# Sequences longer than this are not expanded element-wise into columns (which
+# would explode the CSV width — e.g. a 6000-value load-cell grid → 6000 cols).
 MAX_INLINE = 256
+# Numeric arrays between MAX_INLINE and this are instead kept COMPACTLY as a
+# single JSON-blob column (so the load-cell grid is preserved without widening
+# the CSV); arrays larger than this (e.g. camera images) are only summarised by
+# their length.  split_missions parses the blob back into samples.
+BLOB_MAX = 50000
 
 IMAGE_EXCLUDE_REGEX = '.*image_raw|.*/image(_raw)?(/compressed)?|.*/compressed'
 TEGRASTATS_INTERVAL_MS = 500
@@ -192,6 +197,11 @@ def _flatten(d, prefix=''):
         elif isinstance(v, (list, tuple)):
             if len(v) > MAX_INLINE:
                 out[key + '.len'] = len(v)
+                # Keep a mid-sized numeric array (the load-cell grid) compactly
+                # as one JSON-blob column rather than dropping it; huge arrays
+                # (images) stay summarised by length only.
+                if len(v) <= BLOB_MAX and v and isinstance(v[0], (int, float)):
+                    out[key] = json.dumps(list(v), separators=(',', ':'))
             else:
                 for i, item in enumerate(v):
                     if isinstance(item, dict):

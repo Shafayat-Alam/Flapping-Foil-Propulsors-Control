@@ -17,7 +17,7 @@ State machine
   WAIT      idle — no mission controlling the servos; fins track the IMU
             (roll→IMU x, pitch→IMU y) referenced to the calibration/zero pose
   CALIBRATION  driving every servo to the launch-configured zero pose
-            (roll_zero / pitch_zero) — the merged home/standby pose.  Must be
+            (pitch_zero / heave_zero) — the merged home/standby pose.  Must be
             commanded at least once: nothing else moves the servos until it
             completes.  Arms IMU-follow; available on demand afterward.
   SCANNING  searching for the mission's tag(s) — sweeps one body axis at a time
@@ -84,10 +84,10 @@ MODE_VELOCITY = 1.0
 # So 'calibration' drives every servo to 0.  effort is a fraction 0..1 of the
 # per-axis limit (effort 1 = swing to the limit); a gait's radian amplitude =
 # effort · <axis> limit.
-DEFAULT_ROLL_ZERO = 0.0
 DEFAULT_PITCH_ZERO = 0.0
-DEFAULT_ROLL_LIMIT = math.pi
-DEFAULT_PITCH_LIMIT = math.pi / 2.0
+DEFAULT_HEAVE_ZERO = 0.0
+DEFAULT_PITCH_LIMIT = math.pi
+DEFAULT_HEAVE_LIMIT = math.pi / 2.0
 
 # Heading vocabulary.  Cardinals point at their own tag; intercardinals are the
 # bisector of two adjacent cardinal tags (both must be in view to compute one).
@@ -99,10 +99,10 @@ INTERCARDINALS = {'NE': ('N', 'E'), 'SE': ('S', 'E'),
 class Fin:
     """One propulsor: a roll servo (orients the fin) + a pitch servo (sweeps it)."""
 
-    def __init__(self, set_id, roll_id, pitch_id):
+    def __init__(self, set_id, pitch_id, heave_id):
         self.set_id = set_id
-        self.roll_id = roll_id
         self.pitch_id = pitch_id
+        self.heave_id = heave_id
 
 
 class PID:
@@ -162,9 +162,7 @@ class Controller(Node):
     # After a gait's cycles finish, the controller drives the fins back to
     # neutral and waits for joint_feedback to confirm arrival before reporting
     # ACHIEVED (so crab only advances the queue once the move physically
-    # completed).  This caps that wait so a non-reporting servo can't hang the
-    # whole mission queue — past it we finish anyway with a warning.
-    LOCO_SETTLE_TIMEOUT = 3.0  # s
+    # completed).  This wait is purely encoder-gated — no timeout.
     # No POSE_TIMEOUT: CALIBRATION completion is decided purely by
     # encoder feedback (_pose_settled), so a slow move can never trip a false
     # STUCK.  The controller keeps commanding and waits as long as it takes.
@@ -185,7 +183,7 @@ class Controller(Node):
         self.declare_parameter('kp', 0.0)
         self.declare_parameter('ki', 0.0)
         self.declare_parameter('kd', 0.0)
-        self.declare_parameter('control_rate', 400.0)
+        self.declare_parameter('control_rate', 50.0)
         self.declare_parameter('telemetry_decimation', 1)
         self.declare_parameter('gait_velocity', 3.77)  # nominal peak stroke rate (rad/s, 2π·f·A)
         self.declare_parameter('gait_effort', 0.6)     # nominal stroke amplitude (rad)
@@ -199,12 +197,12 @@ class Controller(Node):
         self.declare_parameter('imu_follow_pitch_gain', 1.0)
         # Paddle gait (sine): roll + pitch sinusoids at one frequency, pitch
         # phase-shifted.  Defaults: velocity 5, pitch phase π/2 (90°).  Per
-        # command: velocity:, pitch_phase: (or pshift:), roll_effort:,
-        # pitch_effort: (each 0..1, else the shared effort:, default 100%).
+        # command: velocity:, pitch_phase: (or pshift:), pitch_effort:,
+        # heave_effort: (each 0..1, else the shared effort:, default 100%).
         self.declare_parameter('paddle_velocity', 5.0)
         self.declare_parameter('paddle_pitch_phase', math.pi / 2.0)
         self.declare_parameter('paddle_slow_factor', 0.10)   # (unused by sine paddle)
-        self.declare_parameter('paddle_roll_amp', math.pi / 4.0)  # (unused by sine paddle)
+        self.declare_parameter('paddle_pitch_amp', math.pi / 4.0)  # (unused by sine paddle)
         # Default number of gait cycles per locomotion command (paddle/flap/
         # lateral) when the mission doesn't say.  Per-command 'cycles:N' (or
         # 'periods:N') overrides; 0 = run forever.
@@ -213,10 +211,10 @@ class Controller(Node):
         # role — the pose calibration drives to and the sole software clamp
         # (Extended Position Mode has no hardware clamp).  Change these in the
         # launch file to retune the rest pose / travel.
-        self.declare_parameter('roll_zero', DEFAULT_ROLL_ZERO)
         self.declare_parameter('pitch_zero', DEFAULT_PITCH_ZERO)
-        self.declare_parameter('roll_limit', DEFAULT_ROLL_LIMIT)    # roll clamped to zero ± this
-        self.declare_parameter('pitch_limit', DEFAULT_PITCH_LIMIT)  # pitch clamped to zero ± this
+        self.declare_parameter('heave_zero', DEFAULT_HEAVE_ZERO)
+        self.declare_parameter('pitch_limit', DEFAULT_PITCH_LIMIT)    # roll clamped to zero ± this
+        self.declare_parameter('heave_limit', DEFAULT_HEAVE_LIMIT)  # pitch clamped to zero ± this
         # Output smoothing: an exponential low-pass on every outgoing position
         # command (0 = off/passthrough; →1 = heavier smoothing/more lag).  It's
         # the weight kept on the previous command each cycle, so it filters the
@@ -238,25 +236,31 @@ class Controller(Node):
         self.imu_follow_roll_gain = self.get_parameter('imu_follow_roll_gain').value
         self.imu_follow_pitch_gain = self.get_parameter('imu_follow_pitch_gain').value
         self.paddle_slow_factor = self.get_parameter('paddle_slow_factor').value
-        self.paddle_roll_amp = self.get_parameter('paddle_roll_amp').value
+        self.paddle_pitch_amp = self.get_parameter('paddle_pitch_amp').value
         self.paddle_cycles = self.get_parameter('paddle_cycles').value
         self.paddle_velocity = self.get_parameter('paddle_velocity').value
         self.paddle_pitch_phase = self.get_parameter('paddle_pitch_phase').value
-        self.paddle_roll_effort = 1.0    # per-mission (see _apply_pending_mission)
-        self.paddle_pitch_effort = 1.0
         # Output low-pass state: last smoothed command per servo (rad).  Cleared
         # on every state change so a new behaviour seeds fresh (no carried lag).
         self.command_smoothing = max(0.0, min(0.95,
             float(self.get_parameter('command_smoothing').value)))
         self._cmd_smooth = {}
-        # Calibration zero pose + per-axis limit (rad).  roll_max_amp/pitch_max_amp
+        # Calibration zero pose + per-axis limit (rad).  pitch_max_amp/heave_max_amp
         # are the effort full-scale (effort 1 = swing to the limit).
-        self.calib_roll = self.get_parameter('roll_zero').value
         self.calib_pitch = self.get_parameter('pitch_zero').value
-        self.roll_limit = self.get_parameter('roll_limit').value
+        self.calib_heave = self.get_parameter('heave_zero').value
         self.pitch_limit = self.get_parameter('pitch_limit').value
-        self.roll_max_amp = self.roll_limit
+        self.heave_limit = self.get_parameter('heave_limit').value
         self.pitch_max_amp = self.pitch_limit
+        self.heave_max_amp = self.heave_limit
+        # Per-mission paddle inputs (direct: rad / rad / rad), set in
+        # _apply_pending_mission.  Seeded with sane defaults (needs heave_max_amp
+        # above, so this must come after it).
+        self.cmd_pitch_amp = self.paddle_pitch_amp          # rad
+        self.cmd_heave_amp = 0.15 * self.heave_max_amp      # rad
+        self.paddle_phase = self.paddle_pitch_phase         # rad (heave vs pitch)
+        self.cmd_freq_ratio = 1.0    # heave_freq / pitch_freq (1.0 = same frequency)
+        self.cmd_pitch_k = 0.0       # pitch-curve shape exponent (0 = plain sine)
         # Active stroke for the current mission (set when a mission is applied):
         # cur_freq (Hz) and cur_effort (amplitude fraction 0..1).
         self.cur_freq, self.cur_effort = self._resolve_gait(None)
@@ -264,6 +268,12 @@ class Controller(Node):
         # Manual teleop override (lab/bench).  When set, it takes over the servo
         # output and the mission state machine is skipped until 'stop'/timeout.
         self.manual = None           # parsed manual command, or None
+        # Silent passthrough: when True (post-calibration), the control loop
+        # drives NO servos, ceding joint_cmd to an external low-level controller
+        # (scripts/pid_tuner.py).  Armed/released via manual_cmd 'passthrough' /
+        # 'stop'.  Unlike a manual drive, it commands nothing — so the external
+        # step reaches the servo un-smoothed, as PID tuning needs.
+        self._passthrough = False
         self.manual_time = 0.0       # monotonic-ish time of the last manual_cmd
 
         # Attitude-hold PID — one instance per axis so roll and pitch integrate
@@ -315,7 +325,6 @@ class Controller(Node):
         self.loco_gait = 'paddle'    # locomotion gait: paddle|flap
         self.loco_periods = 1.0      # gait periods to run per locomotion mission (default 1)
         self._loco_t0 = 0.0          # mission-relative gait clock origin
-        self._loco_settle_t0 = None  # when the post-gait "return to neutral" wait began (None = not settling)
         self._loco_period = 0.0      # seconds per gait period (paddle: emergent; flap: 1/freq)
         self._loco_entry = 0.0       # paddle entry/exit ramp duration (neutral <-> gait pose)
         self.cur_velocity = 0.0      # current mission's velocity (paddle: pitch angular speed)
@@ -425,8 +434,8 @@ class Controller(Node):
           custom (optional) is a spare per-servo value, stored and passed through.
 
         Position limits are NOT read from the map — they're fixed by role from
-        the launch params: each roll servo is clamped to roll_zero ± roll_limit,
-        each pitch servo to pitch_zero ± pitch_limit (same for both sets).
+        the launch params: each roll servo is clamped to pitch_zero ± pitch_limit,
+        each pitch servo to heave_zero ± heave_limit (same for both sets).
         """
         self.all_ids, self.limits, self.custom, self.fins = [], {}, {}, []
         sets = {}   # set_id -> list of sid, in map order (1st = roll, 2nd = pitch)
@@ -449,16 +458,16 @@ class Controller(Node):
                     f"Set {set_id} has {len(members)} servo(s); a fin needs a "
                     f"roll + pitch pair — skipping.")
                 continue
-            roll_id, pitch_id = members[0], members[1]   # positional convention
-            self.fins.append(Fin(set_id, roll_id, pitch_id))
+            pitch_id, heave_id = members[0], members[1]   # positional convention
+            self.fins.append(Fin(set_id, pitch_id, heave_id))
             # Limits are fixed by role: each servo is clamped to its calibration
             # zero ± the role's limit (both from launch params, same for both
             # sets).  The software clamp in _command_targets enforces them —
             # the sole guard in Extended Position Mode.
-            self.limits[roll_id] = (self.calib_roll - self.roll_limit,
-                                    self.calib_roll + self.roll_limit)
             self.limits[pitch_id] = (self.calib_pitch - self.pitch_limit,
-                                     self.calib_pitch + self.pitch_limit)
+                                    self.calib_pitch + self.pitch_limit)
+            self.limits[heave_id] = (self.calib_heave - self.heave_limit,
+                                     self.calib_heave + self.heave_limit)
 
         # Initialise feedback bookkeeping
         for sid in self.all_ids:
@@ -529,35 +538,56 @@ class Controller(Node):
             # Number of cycles: 'cycles:N' or 'periods:N' per command, else the
             # paddle_cycles param default (1).  0 = run forever.
             self.loco_periods = float(m.get('cycles', m.get('periods', self.paddle_cycles)))
-            self.cur_velocity = float(m.get('velocity', self.paddle_velocity))
-            self.cur_effort = max(0.0, min(1.0, float(m.get('effort', 1.0))))
             if gait == 'paddle':
-                # Sine paddle: roll + pitch sinusoids at one frequency; pitch is
-                # phase-shifted.  Roll and pitch efforts are independent (each
-                # falls back to the shared 'effort', default 100%).
-                self.paddle_roll_effort = max(0.0, min(1.0,
-                    float(m.get('roll_effort', self.cur_effort))))
-                self.paddle_pitch_effort = max(0.0, min(1.0,
-                    float(m.get('pitch_effort', self.cur_effort))))
-                self.paddle_pitch_phase = float(m.get('pitch_phase',
-                    m.get('pshift', self.paddle_pitch_phase)))
-                # freq from velocity, referenced to full pitch travel so
-                # 'velocity' is the peak stroke rate at 100% pitch.
-                self.cur_freq = self.cur_velocity / (mc.TWO_PI * self.pitch_max_amp)
+                # Sine paddle: pitch + heave sinusoids at one frequency, heave
+                # phase-shifted from pitch.  DIRECT inputs (no velocity/effort):
+                #   frequency (Hz), pitch_amp (rad), heave_amp (rad), phase (rad)
+                self.cur_freq = float(m.get('frequency', 0.75))
+                self.cmd_pitch_amp = float(m.get('pitch_amp', self.paddle_pitch_amp))
+                self.cmd_heave_amp = float(m.get('heave_amp', 0.15 * self.heave_max_amp))
+                self.paddle_phase = float(m.get('phase',
+                    m.get('pitch_phase', m.get('pshift', self.paddle_pitch_phase))))
+                # heave_freq / pitch_freq; 1.0 = both servos share cur_freq (default,
+                # original behaviour).  Cycle count/duration is always keyed to the
+                # pitch (reference) frequency, regardless of this ratio.
+                self.cmd_freq_ratio = float(m.get('freq_ratio', 1.0))
+                # Pitch-curve shape exponent (see mc.shaped_sine); 'inf' parses
+                # via Python's float() to a true square wave.  0 = plain sine.
+                self.cmd_pitch_k = float(m.get('pitch_k', 0.0))
+                # Harmonic shaping terms. All default to 0, which makes
+                # paddle_harmonic reduce exactly to the plain sine paddle(),
+                # so existing missions are unaffected.
+                self.cmd_p_a2 = float(m.get('p_a2', 0.0))
+                self.cmd_p_phi2 = float(m.get('p_phi2', 0.0))
+                self.cmd_p_a3 = float(m.get('p_a3', 0.0))
+                self.cmd_h_a2 = float(m.get('h_a2', 0.0))
+                self.cmd_h_phi2 = float(m.get('h_phi2', 0.0))
+                self.cmd_h_a3 = float(m.get('h_a3', 0.0))
+                self.cmd_pitch_bias = float(m.get('pitch_bias', 0.0))
                 self._loco_period = (1.0 / self.cur_freq) if self.cur_freq > 1e-6 else 0.0
-            else:   # flap — sinusoid at a derived frequency
+            else:   # flap — legacy velocity/effort inputs (unused by experiment)
+                self.cur_velocity = float(m.get('velocity', self.paddle_velocity))
+                self.cur_effort = max(0.0, min(1.0, float(m.get('effort', 1.0))))
                 self.cur_freq, _ = self._resolve_gait(m)
                 self._loco_period = (1.0 / self.cur_freq) if self.cur_freq > 1e-6 else 0.0
             self._loco_t0 = self.get_clock().now().nanoseconds / 1e9
-            self._loco_settle_t0 = None
             self.required_tags = []
             self._enter('PADDLING' if gait == 'paddle' else 'FLAPPING',
                         event='MISSION_BEGIN')
             count = 'forever' if self.loco_periods <= 0 else f'{self.loco_periods:g} period(s)'
+            if gait == 'paddle':
+                params_str = (f"freq={self.cur_freq:.3f}Hz, "
+                              f"pitch_amp={self.cmd_pitch_amp:.4f}rad, "
+                              f"heave_amp={self.cmd_heave_amp:.4f}rad, "
+                              f"phase={self.paddle_phase:.4f}rad, "
+                              f"freq_ratio={self.cmd_freq_ratio:.4f} "
+                              f"(heave={self.cur_freq*self.cmd_freq_ratio:.3f}Hz), "
+                              f"pitch_k={self.cmd_pitch_k}")
+            else:
+                params_str = f"velocity={self.cur_velocity:.3f}, effort={self.cur_effort:.2f}"
             self.get_logger().info(
                 f"Mission '{label}': {direction} {gait} × {count} — "
-                f"velocity={self.cur_velocity:.3f}, effort={self.cur_effort:.2f}, "
-                f"period={self._loco_period:.2f}s.")
+                f"{params_str}, period={self._loco_period:.2f}s.")
             return
 
         if kind in ('lateral_left', 'lateral_right'):
@@ -573,7 +603,6 @@ class Controller(Node):
             self.cur_freq, _ = self._resolve_gait(m)           # flap sinusoid frequency
             self._loco_period = (1.0 / self.cur_freq) if self.cur_freq > 1e-6 else 0.0
             self._loco_t0 = self.get_clock().now().nanoseconds / 1e9
-            self._loco_settle_t0 = None
             self.required_tags = []
             self._enter('LATERAL', event='MISSION_BEGIN')
             active = 'set 1 (right)' if self.loco_dir == 'left' else 'set 2 (left)'
@@ -760,6 +789,12 @@ class Controller(Node):
 
         now = self.get_clock().now().nanoseconds / 1e9
 
+        # Silent passthrough: an external low-level controller (pid_tuner.py)
+        # owns joint_cmd — drive nothing.  Only after calibration, so it can
+        # never interrupt the calibration that establishes the reference pose.
+        if self._passthrough and self._calibration_done:
+            return
+
         # Hard gate: until a calibration mission has completed at least once
         # this boot, NOTHING moves the servos — not manual, not any mission —
         # except the calibration mission itself.  Calibration must be commanded
@@ -824,7 +859,7 @@ class Controller(Node):
 
     def _calibration_targets(self, target_servo_id=None):
         """
-        Calibration/zero pose for every fin: roll → roll_zero, pitch → pitch_zero
+        Calibration/zero pose for every fin: roll → pitch_zero, pitch → heave_zero
         (the launch-configured rest pose).  Both sets use the same targets.
         target_servo_id restricts to just that one servo (crab's interactive
         per-servo walk); omitted/None targets every servo (full calibration,
@@ -833,8 +868,8 @@ class Controller(Node):
         """
         pose = {}
         for fin in self.fins:
-            pose[fin.roll_id] = self.calib_roll
             pose[fin.pitch_id] = self.calib_pitch
+            pose[fin.heave_id] = self.calib_heave
         if target_servo_id is not None:
             return {target_servo_id: pose[target_servo_id]} if target_servo_id in pose else {}
         return pose
@@ -956,20 +991,18 @@ class Controller(Node):
         elif (t - self._best_progress_time) >= self.STUCK_WINDOW:
             self._enter('STUCK', event='STUCK')
 
-    def _loco_settle(self, t, neutral):
+    def _loco_done(self, t):
         """
-        End-of-gait handling for a locomotion mission.  Returns True once the
-        gait's commanded cycles have elapsed — at which point the fins are
-        driven to ``neutral`` (the gait's rest pose) and HELD there until
-        joint_feedback confirms arrival (``_pose_settled``), and only then is
-        ACHIEVED reported so crab advances the queue.  A non-reporting servo
-        can't hang the queue: past LOCO_SETTLE_TIMEOUT we finish anyway with a
-        warning.  A zero/near-zero period (no motion) settles immediately.
+        End-of-gait check for a locomotion mission.  Returns True once the
+        gait's commanded cycles have elapsed, and reports ACHIEVED so crab
+        advances the queue.  There is NO explicit return-to-neutral: the gait
+        sinusoids start at their center (sin(0)=0) and complete an integer
+        number of cycles, so the fins are already at the rest pose when the
+        cycles finish — no need to drive to or wait for neutral.
 
         Returns:
           False — still cycling; the caller drives the gait this tick.
-          True  — cycles done; this method owns the servos now (settling or
-                  finished), so the caller must NOT also command them.
+          True  — cycles done; ACHIEVED reported, caller must NOT command.
         """
         if self.loco_periods <= 0:
             return False   # run forever (no auto-stop) — the default for gaits
@@ -977,19 +1010,7 @@ class Controller(Node):
                    and (t - self._loco_t0) < self.loco_periods * self._loco_period)
         if cycling:
             return False
-
-        # Cycles complete → hold the neutral pose and wait for encoder confirm.
-        if self._loco_settle_t0 is None:
-            self._loco_settle_t0 = t
-        self._command_imu_filled(neutral)   # un-named servos keep following the IMU
-        settled = (not neutral) or self._pose_settled(neutral)
-        timed_out = (t - self._loco_settle_t0) >= self.LOCO_SETTLE_TIMEOUT
-        if settled or timed_out:
-            if timed_out and not settled:
-                self.get_logger().warn(
-                    "Gait settle timed out — no encoder confirmation of neutral; "
-                    "finishing mission anyway.")
-            self._enter('WAIT', event='ACHIEVED')
+        self._enter('WAIT', event='ACHIEVED')
         return True
 
     def _do_flap(self, t):
@@ -1004,22 +1025,18 @@ class Controller(Node):
             turn_left   : set 1 (right) flaps; set 2 idle → IMU
             turn_right  : set 2 (left)  flaps; set 1 idle → IMU
         """
-        # Neutral (rest) pose for the servos this gait drives: active fins'
-        # pitch back to centre (rolls are un-named → IMU-follow).
-        neutral = {fin.pitch_id: self.calib_pitch
-                   for fin in self.fins if self._flap_fin_active(fin)}
-        if self._loco_settle(t, neutral):
+        if self._loco_done(t):
             return
         tau = max(0.0, t - self._loco_t0)  # mission-relative clock (period starts at 0)
-        pitch_amp = self.cur_effort * self.pitch_max_amp
+        heave_amp = self.cur_effort * self.heave_max_amp
         targets = {}
         for fin in self.fins:
             if not self._flap_fin_active(fin):
                 continue   # idle fin → un-named → IMU-follow
             targets.update(mc.flap(
-                fin.roll_id, fin.pitch_id, tau,
-                self.cur_freq, pitch_amp, waveform=mc.sine,
-                pitch_center=self.calib_pitch))
+                fin.pitch_id, fin.heave_id, tau,
+                self.cur_freq, heave_amp, waveform=mc.sine,
+                heave_center=self.calib_heave))
         self._command_imu_filled(targets)
 
     def _flap_fin_active(self, fin):
@@ -1055,15 +1072,15 @@ class Controller(Node):
         servos, each added on top of that servo's calibration target so an IMU
         reading of zero holds exactly the calibration pose:
 
-            roll_servo  = roll_zero  + roll_gain  · imu_roll
-            pitch_servo = pitch_zero + pitch_gain · imu_pitch
+            pitch_servo  = pitch_zero  + roll_gain  · imu_roll
+            heave_servo = heave_zero + pitch_gain · imu_pitch
         """
         roll, pitch, _ = self.orientation
         base = self._calibration_targets()   # per-set standby pose = the IMU-zero reference
         targets = {}
         for fin in self.fins:
-            targets[fin.roll_id] = base[fin.roll_id] + self.imu_follow_roll_gain * roll
-            targets[fin.pitch_id] = base[fin.pitch_id] + self.imu_follow_pitch_gain * pitch
+            targets[fin.pitch_id] = base[fin.pitch_id] + self.imu_follow_roll_gain * roll
+            targets[fin.heave_id] = base[fin.heave_id] + self.imu_follow_pitch_gain * pitch
         return targets
 
     def _command_imu_filled(self, explicit: dict):
@@ -1103,22 +1120,20 @@ class Controller(Node):
             lateral 'right' → set 2 (left)  pitch oscillates → slides right
         Runs until preempted (periods <= 0).
         """
-        # Neutral: both fins' pitch at centre (rolls un-named → IMU-follow).
-        neutral = {fin.pitch_id: self.calib_pitch for fin in self.fins}
-        if self._loco_settle(t, neutral):
+        if self._loco_done(t):
             return
         tau = max(0.0, t - self._loco_t0)
-        pitch_amp = self.cur_effort * self.pitch_max_amp
+        heave_amp = self.cur_effort * self.heave_max_amp
         targets = {}
         for fin in self.fins:
             active = ((self.loco_dir == 'left' and fin.set_id == 1) or
                       (self.loco_dir == 'right' and fin.set_id == 2))
             if active:
-                targets.update(mc.flap(fin.roll_id, fin.pitch_id, tau,
-                                       self.cur_freq, pitch_amp, waveform=mc.sine,
-                                       pitch_center=self.calib_pitch))
+                targets.update(mc.flap(fin.pitch_id, fin.heave_id, tau,
+                                       self.cur_freq, heave_amp, waveform=mc.sine,
+                                       heave_center=self.calib_heave))
             else:
-                targets[fin.pitch_id] = self.calib_pitch     # other fin pitch held at 0
+                targets[fin.heave_id] = self.calib_heave     # other fin pitch held at 0
         self._command_imu_filled(targets)   # rolls (un-named) follow IMU
 
     def _do_drive(self, t):
@@ -1131,31 +1146,47 @@ class Controller(Node):
 
     def _do_paddle(self, t):
         """
-        Directional sine paddle (see mc.paddle): roll + pitch sinusoids at one
-        frequency, pitch phase-shifted.  Roll amplitude = roll_effort·roll_max,
-        pitch = pitch_effort·pitch_max (independent efforts).  Direction flips
-        the roll sign (forward/backward/turns).  Sinusoids are continuous, so
+        Directional sine paddle (see mc.paddle): pitch + heave sinusoids at one
+        frequency, heave phase-shifted from pitch.  Amplitudes are commanded
+        DIRECTLY in radians (cmd_pitch_amp, cmd_heave_amp); frequency directly
+        in Hz (cur_freq); phase directly in rad (paddle_phase).  Direction flips
+        the pitch sign (forward/backward/turns).  Sinusoids are continuous, so
         multiple cycles flow smoothly; runs loco_periods cycles then finishes.
         """
-        # Neutral: every driven servo (roll + pitch of all fins) back to centre.
-        neutral = {}
-        for fin in self.fins:
-            neutral[fin.roll_id] = self.calib_roll
-            neutral[fin.pitch_id] = self.calib_pitch
-        if self._loco_settle(t, neutral):
+        if self._loco_done(t):
             return
         tau = max(0.0, t - self._loco_t0)
-        roll_amp_mag = self.paddle_roll_effort * self.roll_max_amp
-        pitch_amp = self.paddle_pitch_effort * self.pitch_max_amp
+        pitch_amp_mag = self.cmd_pitch_amp
+        heave_amp = self.cmd_heave_amp
         targets = {}
         for fin in self.fins:
-            # Sign of roll amplitude selects thrust direction per fin.
-            roll_amp = -roll_amp_mag if self._paddle_fin_reversed(fin) else roll_amp_mag
-            targets.update(mc.paddle(
-                fin.roll_id, fin.pitch_id, tau, self.cur_freq,
-                roll_amp, pitch_amp,
-                roll_center=self.calib_roll, pitch_center=self.calib_pitch,
-                pitch_phase=self.paddle_pitch_phase))
+            # Sign of pitch amplitude selects thrust direction per fin.
+            pitch_amp = -pitch_amp_mag if self._paddle_fin_reversed(fin) else pitch_amp_mag
+            # Route to the harmonic paddle only when some harmonic term is
+            # actually non-zero, so the plain-sine path (and pitch_k, which
+            # paddle_harmonic does not implement) stays byte-identical for
+            # every existing mission.
+            if any(abs(v) > 1e-12 for v in (
+                    getattr(self, 'cmd_p_a2', 0.0), getattr(self, 'cmd_p_a3', 0.0),
+                    getattr(self, 'cmd_h_a2', 0.0), getattr(self, 'cmd_h_a3', 0.0),
+                    getattr(self, 'cmd_pitch_bias', 0.0))):
+                targets.update(mc.paddle_harmonic(
+                    fin.pitch_id, fin.heave_id, tau, self.cur_freq,
+                    pitch_amp, heave_amp,
+                    pitch_center=self.calib_pitch, heave_center=self.calib_heave,
+                    pitch_phase=self.paddle_phase,
+                    heave_freq_ratio=self.cmd_freq_ratio,
+                    p_a2=self.cmd_p_a2, p_phi2=self.cmd_p_phi2, p_a3=self.cmd_p_a3,
+                    h_a2=self.cmd_h_a2, h_phi2=self.cmd_h_phi2, h_a3=self.cmd_h_a3,
+                    pitch_bias=self.cmd_pitch_bias))
+            else:
+                targets.update(mc.paddle(
+                    fin.pitch_id, fin.heave_id, tau, self.cur_freq,
+                    pitch_amp, heave_amp,
+                    pitch_center=self.calib_pitch, heave_center=self.calib_heave,
+                    pitch_phase=self.paddle_phase,
+                    heave_freq_ratio=self.cmd_freq_ratio,
+                    pitch_k=self.cmd_pitch_k))
         self._command_imu_filled(targets)
 
     # ---- Progress --------------------------------------------------------
@@ -1185,9 +1216,9 @@ class Controller(Node):
         (a fraction 0..1 of the per-axis max travel — effort 1 swings all the
         way to the position limits; >1 is clamped to 1).  Either may be absent,
         falling back to the nominal config.  Peak stroke rate is 2π·f·A with A
-        the roll sweep amplitude (= effort·roll_limit), so frequency is:
+        the roll sweep amplitude (= effort·pitch_limit), so frequency is:
 
-            freq = velocity / (2π · effort · roll_limit)
+            freq = velocity / (2π · effort · pitch_limit)
 
         There is no upper cap on freq — velocity may be arbitrarily large.  The
         gait methods scale ``effort`` into a per-axis radian amplitude.
@@ -1196,8 +1227,8 @@ class Controller(Node):
         velocity = float(mission.get('velocity', self.nominal_velocity))
         effort = float(mission.get('effort', self.nominal_effort))
         effort = max(0.0, min(1.0, effort))          # fraction of max amplitude
-        roll_amp = effort * self.roll_max_amp        # radian amplitude of the roll sweep
-        freq = velocity / (mc.TWO_PI * roll_amp) if roll_amp > 1e-6 else 0.0
+        pitch_amp = effort * self.pitch_max_amp        # radian amplitude of the roll sweep
+        freq = velocity / (mc.TWO_PI * pitch_amp) if pitch_amp > 1e-6 else 0.0
         return freq, effort
 
     # ---- Manual teleop (lab/bench, off the mission path) ------------------
@@ -1230,8 +1261,18 @@ class Controller(Node):
 
         if 'stop' in flags:
             self.manual = None
+            self._passthrough = False
             self._command_targets({})   # neutral hold once
             self.get_logger().info("Manual: stop — released to mission flow.")
+            return
+
+        if 'passthrough' in flags:
+            # Cede joint_cmd to an external low-level controller (pid_tuner.py):
+            # stay armed but drive nothing until 'stop'.  Blocked pre-calibration.
+            self.manual = None
+            self._passthrough = True
+            self.get_logger().info("Manual: passthrough — control loop will not "
+                                   "drive servos; external joint_cmd owns them.")
             return
 
         def _num(key, default=None):
@@ -1249,7 +1290,7 @@ class Controller(Node):
             manual = {
                 'type': 'gait',
                 'kind': 'paddle' if tokens.get('type', 'flap').lower() == 'paddle' else 'flap',
-                'roll': fin.roll_id, 'pitch': fin.pitch_id,
+                'roll': fin.pitch_id, 'pitch': fin.heave_id,
                 'freq': _num('freq', 1.0), 'amp': _num('amp', 0.3),
                 'wave': tokens.get('wave', 'sine'),
                 'vel': _num('vel', 1.0),   # paddle: pitch angular speed (rad/s)
@@ -1293,9 +1334,9 @@ class Controller(Node):
             # Roll amp from the direction param (forward sign); pitch amp = manual
             # amp; vel is the pitch angular speed.  Centred on the calibration pose.
             targets.update(mc.paddle(m['roll'], m['pitch'], t,
-                                     m['vel'], self.paddle_roll_amp, m['amp'],
-                                     roll_center=self.calib_roll,
+                                     m['vel'], self.paddle_pitch_amp, m['amp'],
                                      pitch_center=self.calib_pitch,
+                                     heave_center=self.calib_heave,
                                      slow_factor=self.paddle_slow_factor))
             only_named = True
         else:   # flap
@@ -1303,7 +1344,7 @@ class Controller(Node):
             # only what the gait names so the un-commanded roll isn't reset.
             targets.update(mc.flap(m['roll'], m['pitch'], t,
                                    m['freq'], m['amp'], waveform=m['wave'],
-                                   pitch_center=self.calib_pitch))
+                                   heave_center=self.calib_heave))
             only_named = True
         self._command_targets(targets, only_named=only_named)
 
@@ -1317,7 +1358,7 @@ class Controller(Node):
         flap oscillates only the pitch servos; each fin's roll servo is not
         driven here, so it keeps following the IMU (see _command_imu_filled).
         """
-        pitch_amp = self.cur_effort * self.pitch_max_amp
+        heave_amp = self.cur_effort * self.heave_max_amp
         targets = {}
         if abs(bearing) > self.TURN_BEARING:
             # Turning manoeuvre: opposed flapping biased by bearing sign
@@ -1326,16 +1367,16 @@ class Controller(Node):
                 turn = side * math.copysign(1.0, bearing)
                 phase = 0.0 if turn >= 0 else math.pi
                 targets.update(mc.flap(
-                    fin.roll_id, fin.pitch_id, t,
-                    self.cur_freq, pitch_amp, phase=phase, waveform=mc.sine,
-                    pitch_center=self.calib_pitch))
+                    fin.pitch_id, fin.heave_id, t,
+                    self.cur_freq, heave_amp, phase=phase, waveform=mc.sine,
+                    heave_center=self.calib_heave))
         else:
             # Cruise: synchronous flapping for forward thrust
             for fin in self.fins:
                 targets.update(mc.flap(
-                    fin.roll_id, fin.pitch_id, t,
-                    self.cur_freq, pitch_amp, waveform=mc.sine,
-                    pitch_center=self.calib_pitch))
+                    fin.pitch_id, fin.heave_id, t,
+                    self.cur_freq, heave_amp, waveform=mc.sine,
+                    heave_center=self.calib_heave))
         self._command_imu_filled(targets)
 
     def _command_scan(self, t, axis):
@@ -1350,13 +1391,13 @@ class Controller(Node):
         for idx, fin in enumerate(self.fins):
             side = 1.0 if idx % 2 == 0 else -1.0
             if axis == 0:        # yaw: opposed pitch sweep, roll held neutral
-                targets.update(mc.sweep(fin.pitch_id, t, self.SCAN_RATE,
+                targets.update(mc.sweep(fin.heave_id, t, self.SCAN_RATE,
                                         side * self.SCAN_SPAN))
-                targets.update(mc.drive(fin.roll_id, 0.0))
+                targets.update(mc.drive(fin.pitch_id, 0.0))
             elif axis == 1:      # pitch: synchronous pitch sweep
-                targets.update(mc.sweep(fin.pitch_id, t, self.SCAN_RATE, self.SCAN_SPAN))
+                targets.update(mc.sweep(fin.heave_id, t, self.SCAN_RATE, self.SCAN_SPAN))
             else:                # roll: opposed roll sweep
-                targets.update(mc.sweep(fin.roll_id, t, self.SCAN_RATE,
+                targets.update(mc.sweep(fin.pitch_id, t, self.SCAN_RATE,
                                         side * self.SCAN_SPAN))
         # Whichever axis isn't being swept this pass is left un-named, so it
         # keeps following the IMU (see _command_imu_filled).
@@ -1374,13 +1415,13 @@ class Controller(Node):
         """
         now = self.get_clock().now().nanoseconds / 1e9
         roll, pitch, _ = self.orientation
-        roll_cmd = self.roll_pid.update(-roll, now)
-        pitch_cmd = self.pitch_pid.update(-pitch, now)
+        pitch_cmd = self.roll_pid.update(-roll, now)
+        heave_cmd = self.pitch_pid.update(-pitch, now)
         targets = {}
         for idx, fin in enumerate(self.fins):
             side = 1.0 if idx % 2 == 0 else -1.0
-            targets.update(mc.drive(fin.roll_id, side * roll_cmd))
-            targets.update(mc.drive(fin.pitch_id, pitch_cmd))
+            targets.update(mc.drive(fin.pitch_id, side * pitch_cmd))
+            targets.update(mc.drive(fin.heave_id, heave_cmd))
         self._command_targets(targets)
 
     def _command_targets(self, targets: dict, only_named: bool = False):
@@ -1418,8 +1459,8 @@ class Controller(Node):
             if mode_code == MODE_POSITION:
                 # Position targets are relative to the servo's homed zero.
                 # Limits are ±inf for now (clamping removed), so this passes
-                # the target through unchanged; restore finite ROLL_LIMIT/
-                # PITCH_LIMIT to re-enable the clamp.
+                # the target through unchanged; restore finite PITCH_LIMIT/
+                # HEAVE_LIMIT to re-enable the clamp.
                 lo, hi = self.limits.get(sid, (-math.inf, math.inf))
                 val = max(lo, min(hi, raw))
                 # Output low-pass: ease each command toward its target so the

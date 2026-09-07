@@ -48,14 +48,23 @@ from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 PACKAGE = 'soft_propulsors_control'
 
-# record_session.py lives in the workspace root, three levels up from this
-# launch file (launch/ -> soft_propulsors_control/ -> src/ -> <root>).
-WORKSPACE_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-RECORDER = os.path.join(WORKSPACE_ROOT, 'record_session.py')
+# record_session.py lives in scripts/, in the workspace root. Relative-path
+# derivation from __file__ doesn't work here: `ros2 launch` always loads the
+# INSTALLED copy of this file (install/soft_propulsors_control/share/
+# soft_propulsors_control/launch/crab_launch.py, a plain copy, not a
+# --symlink-install symlink back to src/), which sits at a different depth
+# relative to the workspace root than the source copy does — walking a fixed
+# number of '..' up from __file__ lands inside install/, not the workspace
+# root, however many levels you pick, since running from source vs. running
+# from the installed copy need different counts. Hardcoded absolute path
+# instead (this repo isn't relocated/isn't meant to be — see the similarly
+# hardcoded FTDI serial-by-id path a few lines below).
+WORKSPACE_ROOT = '/home/shafa/soft-propulsors-control'
+RECORDER = os.path.join(WORKSPACE_ROOT, 'scripts', 'record_session.py')
 
 
 def generate_launch_description():
@@ -65,8 +74,25 @@ def generate_launch_description():
         default_value='session_' + datetime.now().strftime('%Y%m%d_%H%M%S'),
         description='Output folder for the recorded session (relative to cwd).')
     record_arg = DeclareLaunchArgument(
-        'record', default_value='true',
-        description='Record all topics and export per-mission CSVs on shutdown.')
+        'record', default_value='false',
+        description='Record all topics and export per-mission CSVs on shutdown. '
+                    'OFF by default: the bag captures the 10 kHz load cell for '
+                    'the whole session, so every launch left a multi-GB '
+                    'session_* folder behind whether or not anything was run. '
+                    'The experiment scripts write their own per-mission CSVs, '
+                    'so this is only needed for ad-hoc missions driven through '
+                    'the dispatcher. Turn it back on with record:=true.')
+    # Loop rates, overridable from the command line so you can sweep them, e.g.
+    #   ros2 launch ... crab_launch.py control_rate:=200 hardware_rate:=200
+    # to find the highest rate the serial loop can actually sustain.
+    control_rate_arg = DeclareLaunchArgument(
+        'control_rate', default_value='200.0',
+        description='Controller + crab loop rate (Hz).')
+    hardware_rate_arg = DeclareLaunchArgument(
+        'hardware_rate', default_value='100.0',
+        description='Servo write/read loop rate (Hz).')
+    control_rate = ParameterValue(LaunchConfiguration('control_rate'), value_type=float)
+    hardware_rate = ParameterValue(LaunchConfiguration('hardware_rate'), value_type=float)
 
     # Started with the stack; on Ctrl+C of the launch it gets SIGINT too, stops
     # the bag, and writes the CSVs.  sigterm/sigkill timeouts are stretched so a
@@ -83,6 +109,8 @@ def generate_launch_description():
     return LaunchDescription([
         session_arg,
         record_arg,
+        control_rate_arg,
+        hardware_rate_arg,
         recorder,
 
         # ------------------------------------------------------------------
@@ -94,12 +122,16 @@ def generate_launch_description():
             name='crab_mission_dispatcher',
             output='screen',
             parameters=[{
+                # Single-fin experiment rig: only servos 1 (pitch) & 2 (heave)
+                # are connected. Add '[3, 2], [4, 2]' back for the two-fin robot.
                 'actuator_map': '[[1, 1], '
-                                '[2, 1], '
-                                '[3, 2], '
-                                '[4, 2]]',
+                                '[2, 1]]',
                 'operating_mode': 'extended_position',   # 'extended_position' | 'position' | 'velocity'
-                'control_rate': 100.0,         # Hz — must match controller
+                'control_rate': control_rate,  # Hz — from launch arg (default 100).
+                                               # Verified smooth at 100 Hz end-to-end once
+                                               # the FTDI latency_timer is 1 ms; 16 ms
+                                               # default caps feedback near 66 Hz. Override:
+                                               # control_rate:=<Hz> hardware_rate:=<Hz>
                 'operational_readiness': 2.0,  # s — wait after home_state before standby
                 'mission_readiness': 2.0,       # s — wait after standby before missions run
                 'gait_velocity': 3.77,          # rad/s — nominal peak stroke rate (2π·f·A)
@@ -122,8 +154,7 @@ def generate_launch_description():
                 'kp': 0.0,
                 'ki': 0.0,
                 'kd': 0.0,
-                'control_rate': 100.0,         # Hz — control loop rate (higher = finer,
-                                               # smoother setpoint stream → less jitter)
+                'control_rate': control_rate,  # Hz — from launch arg (match crab & hardware)
                 'telemetry_decimation': 1,      # publish every sample
                 'paddle_cycles': 1,            # default gait cycles per command (0 = forever)
                 'paddle_velocity': 5.0,        # default paddle velocity (peak stroke rate)
@@ -135,12 +166,12 @@ def generate_launch_description():
                 # Calibration zero pose (rad) that 'calibration' drives every
                 # servo to, and that everything (IMU-follow, gaits) references.
                 # Both 0 → calibration sets all servos to 0.
-                'roll_zero': 0.0,                  # roll rest position
-                'pitch_zero': 0.0,                 # pitch rest position
+                'pitch_zero': 0.0,                  # roll rest position
+                'heave_zero': 0.0,                 # pitch rest position
                 # Position limits: each servo clamped to its zero ± this (rad).
                 # Sole clamp in Extended Position Mode; change freely here.
-                'roll_limit': 3.141592653589793,   # roll:  0 ± π   → [-π, π]
-                'pitch_limit': 1.5707963267948966, # pitch: 0 ± π/2 → [-π/2, π/2]
+                'pitch_limit': 3.141592653589793,   # roll:  0 ± π   → [-π, π]
+                'heave_limit': 1.5707963267948966, # pitch: 0 ± π/2 → [-π/2, π/2]
             }],
         ),
 
@@ -179,19 +210,38 @@ def generate_launch_description():
                 'port':       '/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FT9MIR5U-if00-port0',
                 'baudrate':   1000000,
                 # Per-servo rotation-direction inversion (JSON list of ids).
-                # Servo 1 (set 1 roll) and servo 2 (set 1 pitch) rotate the wrong
-                # way — reverse both.  Servos 3 (set 2 roll) and 4 (set 2 pitch)
-                # are correct as-is.
-                'reverse_servos': '[1, 2]',
-                'hardware_rate': 100.0,  # Hz - write/read cycle rate (match control_rate
-                                         # for a smooth, low-jitter setpoint stream)
+                # Servo 2 (set 1 heave) rotates the wrong way — reverse it.
+                # Servo 1 (set 1 pitch) was also reversed, but pitch up/down
+                # came out backwards, so servo 1 is deliberately left OUT of
+                # this list (un-reversed) to flip its commanded direction.
+                # Servos 3 (set 2 roll) and 4 (set 2 pitch) are correct as-is.
+                'reverse_servos': '[2]',
+                'hardware_rate': hardware_rate,  # Hz - from launch arg (match control_rate).
+                                         # Requires FTDI latency_timer=1 to sustain 100 Hz;
+                                         # 16 ms default caps ~66 Hz. This is the loop whose
+                                         # serial round-trip sets the real rate ceiling.
                 'current_limit': 648,  # XW430-T200 max valid value (1.743 A)
 
                 'servo_position_p_gain': 900,
                 'servo_position_i_gain': 0,
                 'servo_position_d_gain': 0,
+                # Per-servo Position PID override (JSON keyed by servo id),
+                # written live when changed at runtime — this is what
+                # scripts/pid_tuner.py sets. '' = all servos use the scalars.
+                # After tuning, paste the tuner's result here to make it the
+                # boot default, e.g. '{"1": {"p": 950, "d": 400}, "2": {...}}'.
+                # Identified on the rig IN WATER by scripts/pid_tuner.py
+                # (position_pid_tune_full/RESULT.txt), sweeping all three
+                # gains rather than pinning Ki. The two servos want very
+                # different values -- pitch 2750 vs heave 3050 -- and both
+                # are far above the old shared default of 900, which had
+                # never been identified from data. Kd converged to 0 on
+                # both: overshoot stayed under 1.5% even near Kp 3000, so
+                # there was nothing for a derivative term to damp.
+                'position_gain_overrides': '{"1": {"p": 2750, "i": 50, "d": 0}, "2": {"p": 3050, "i": 50, "d": 0}}',
                 'servo_velocity_p_gain': 100,
                 'servo_velocity_i_gain': 1920,
+                # Velocity Limit (reg 44) is set on the servo via Wizard, not here.
                 # 0 = unlimited (no onboard trapezoidal profile).  The controller
                 # STREAMS the gait trajectory at its control rate, so the servo
                 # must track each setpoint at full speed — a nonzero profile caps
@@ -254,8 +304,8 @@ def generate_launch_description():
                 'udp_port': 5005,             # UDP port the sensor streams to
                 'bind_address': '0.0.0.0',    # listen on all interfaces
                 'rows': 6,                    # F/T axes per sample [Fx,Fy,Fz,Tx,Ty,Tz]
-                'cols': 20,                   # samples batched per UDP packet
-                'sample_rate': 100000.0,      # Hz — 20 samples = 200 µs/packet (10 µs apart)
+                'cols': 1000,                 # samples batched per UDP packet (must match LabVIEW)
+                'sample_rate': 10000.0,       # Hz — 1000 samples = 100 ms/packet (100 µs apart)
                 'topic': 'load_cell_data',
             }],
         ),

@@ -4,6 +4,6 @@ labels=(000 015 030 045 060 075 090 105 120 135 150 165 180)
 for i in "${!phases[@]}"; do
   ros2 topic pub --once /mission_input std_msgs/msg/String \
     "{data: 'forward_paddle velocity:5 roll_effort:0.6 pitch_effort:0.6 pitch_phase:${phases[$i]} cycles:4 label:SWEEP_${labels[$i]}'}"
-  sleep 38
+  sleep 5
 done
 

@@ -1,5 +1,5 @@
 # Stakeholder Expectations
-_Generated 2026-06-07 from model/. Do not edit._
+_Generated 2026-09-03 from model/. Do not edit._
 
 ### STK-PI — Principal investigator / student researcher
 - **STK-EXP-01** (draft): Demonstrate autonomous homing to an AprilTag using soft flapping propulsion.

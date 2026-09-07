@@ -1,5 +1,5 @@
 # Interface Design Description (IDD)
-_Generated 2026-06-07 from model/interfaces_detail.yaml._
+_Generated 2026-09-03 from model/interfaces_detail.yaml._
 
 ## IF-MISIN — mission_input  (ros_topic)
 - **Direction:** C-OPC -> C-CRAB (tasking)
@@ -40,16 +40,16 @@ _Generated 2026-06-07 from model/interfaces_detail.yaml._
 ## IF-JCMD — joint_cmd  (ros_topic)
 - **Direction:** C-CTRL -> C-DXLIF (command)
 - **Encoding:** std_msgs/Float32MultiArray — joint positions, actuator-map order
-- **Rate:** 400 Hz produce [TBC]; applied to bus at 500 Hz hardware loop
+- **Rate:** 200 Hz produce [TBC]; applied to bus at 100 Hz hardware loop
 - **QoS:** depth=1, RELIABLE (latest-only)
 - **Units:** radians  ·  **Range:** per-joint mechanical [min,max], clamped (SYS-017)
 - **Error handling:** out-of-range clamped; none published before config (SYS-020)
-- **Source:** `controller.py:172,176; Dynamixel_XW430_T200_interface.py:97,100-101`
+- **Source:** `crab_launch.py:89-92; controller.py:172,176; Dynamixel_XW430_T200_interface.py:97,100-101`
 
 ## IF-JFB — joint_feedback  (ros_topic)
 - **Direction:** C-DXLIF -> C-CTRL (feedback)
 - **Encoding:** std_msgs/Float32MultiArray — present joint positions
-- **Rate:** 500 Hz hardware loop [TBC]
+- **Rate:** 100 Hz hardware loop [TBC]
 - **QoS:** depth=1, RELIABLE (latest-only)
 - **Units:** radians  ·  **Range:** joint travel
 - **Error handling:** controller tolerates dropped/late frames (IRD-06)
@@ -94,7 +94,7 @@ _Generated 2026-06-07 from model/interfaces_detail.yaml._
 ## IF-RS485 — servo bus (RS-485)  (physical)
 - **Direction:** C-COMPUTE -> C-SERVO (actuation bus)
 - **Encoding:** Dynamixel Protocol 2.0 frames (sync/bulk read+write)
-- **Rate:** 1,000,000 baud; 500 Hz hardware loop
+- **Rate:** 1,000,000 baud; 100 Hz hardware loop
 - **QoS:** n/a (physical)
 - **Units:** protocol register values  ·  **Range:** 4 servo IDs
 - **Error handling:** comm result checked per packet; failed IDs logged

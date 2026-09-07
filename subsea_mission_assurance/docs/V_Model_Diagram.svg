@@ -1,0 +1,51 @@
+<svg viewBox="0 0 1060 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="V-model: decomposition descends the left arm from stakeholder expectations to architecture, meets the built vehicle at the bottom, then integration, verification, and validation ascend the right arm to operations, which loops back to a model edit on any hardware or firmware change.">
+<defs><marker id="vArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5C6B6E"/></marker>
+<marker id="vArrowAmber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#B5651D"/></marker></defs>
+<rect x="0" y="0" width="1060" height="560" fill="#F7F9F8"/>
+<line x1="90.0" y1="120.0" x2="178.0" y2="206.0" stroke="#5C6B6E" stroke-width="1.1"/>
+<line x1="178.0" y1="206.0" x2="266.0" y2="272.0" stroke="#5C6B6E" stroke-width="1.1"/>
+<line x1="266.0" y1="272.0" x2="354.0" y2="338.0" stroke="#5C6B6E" stroke-width="1.1"/>
+<line x1="354.0" y1="338.0" x2="442.0" y2="404.0" stroke="#5C6B6E" stroke-width="1.1"/>
+<line x1="442.0" y1="404.0" x2="530.0" y2="470.0" stroke="#5C6B6E" stroke-width="1.1"/>
+<line x1="530.0" y1="470.0" x2="618.0" y2="404.0" stroke="#5C6B6E" stroke-width="1.1"/>
+<line x1="618.0" y1="404.0" x2="706.0" y2="338.0" stroke="#5C6B6E" stroke-width="1.1"/>
+<line x1="706.0" y1="338.0" x2="794.0" y2="272.0" stroke="#5C6B6E" stroke-width="1.1"/>
+<line x1="794.0" y1="272.0" x2="882.0" y2="206.0" stroke="#5C6B6E" stroke-width="1.1"/>
+<line x1="882.0" y1="206.0" x2="970.0" y2="120.0" stroke="#5C6B6E" stroke-width="1.1"/>
+<line x1="970.0" y1="120.0" x2="530.0" y2="78.0" stroke="#0E6E77" stroke-width="1.4" marker-end="url(#vArrow)"/>
+<line x1="530.0" y1="78.0" x2="90.0" y2="120.0" stroke="#0E6E77" stroke-width="1.4" marker-end="url(#vArrow)"/>
+<rect x="442.0" y="450.0" width="176" height="40" rx="4" fill="#EFF3F2" stroke="#16232B" stroke-width="1.3"/>
+<text x="530.0" y="467.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="11.5" font-weight="600" fill="#16232B">Built Vehicle</text>
+<text x="530.0" y="482.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="9.5" fill="#71807F">the real ROS2 stack</text>
+<rect x="442.0" y="58.0" width="176" height="40" rx="4" fill="#E4F0EF" stroke="#0E6E77" stroke-width="1.3"/>
+<text x="530.0" y="75.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="11.5" font-weight="600" fill="#16232B">Operations</text>
+<text x="530.0" y="90.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="9.5" fill="#71807F">PH-1..PH-6</text>
+<path d="M 490,70 C 270,26 298.0,136.0 188.0,182.0" fill="none" stroke="#B5651D" stroke-width="1.4" stroke-dasharray="5,4" marker-end="url(#vArrowAmber)"/>
+<text x="354.0" y="32.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="10.5" fill="#B5651D">recommission: change to seals, wiring, firmware, gait gains, or calibration</text>
+<rect x="90.0" y="186.0" width="176" height="40" rx="4" fill="#FFFFFF" stroke="#B9C4C2" stroke-width="1.3"/>
+<text x="178.0" y="203.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="11.5" font-weight="600" fill="#16232B">Stakeholder Expectations</text>
+<text x="178.0" y="218.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="9.5" fill="#71807F">stakeholders.yaml</text>
+<rect x="178.0" y="252.0" width="176" height="40" rx="4" fill="#FFFFFF" stroke="#B9C4C2" stroke-width="1.3"/>
+<text x="266.0" y="269.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="11.5" font-weight="600" fill="#16232B">Success Criteria</text>
+<text x="266.0" y="284.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="9.5" fill="#71807F">program.yaml (moes/mops)</text>
+<rect x="266.0" y="318.0" width="176" height="40" rx="4" fill="#FFFFFF" stroke="#B9C4C2" stroke-width="1.3"/>
+<text x="354.0" y="335.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="11.5" font-weight="600" fill="#16232B">System Requirements</text>
+<text x="354.0" y="350.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="9.5" fill="#71807F">requirements.yaml</text>
+<rect x="354.0" y="384.0" width="176" height="40" rx="4" fill="#FFFFFF" stroke="#B9C4C2" stroke-width="1.3"/>
+<text x="442.0" y="401.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="11.5" font-weight="600" fill="#16232B">Architecture + Interfaces</text>
+<text x="442.0" y="416.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="9.5" fill="#71807F">architecture.yaml, interfaces_detail.yaml</text>
+<rect x="530.0" y="384.0" width="176" height="40" rx="4" fill="#FFFFFF" stroke="#B9C4C2" stroke-width="1.3"/>
+<text x="618.0" y="401.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="11.5" font-weight="600" fill="#16232B">Integration</text>
+<text x="618.0" y="416.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="9.5" fill="#71807F">integration.yaml</text>
+<rect x="618.0" y="318.0" width="176" height="40" rx="4" fill="#FFFFFF" stroke="#B9C4C2" stroke-width="1.3"/>
+<text x="706.0" y="335.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="11.5" font-weight="600" fill="#16232B">Verification</text>
+<text x="706.0" y="350.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="9.5" fill="#71807F">verification.yaml</text>
+<rect x="706.0" y="252.0" width="176" height="40" rx="4" fill="#FFFFFF" stroke="#B9C4C2" stroke-width="1.3"/>
+<text x="794.0" y="269.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="11.5" font-weight="600" fill="#16232B">Validation</text>
+<text x="794.0" y="284.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="9.5" fill="#71807F">conops.yaml (scenarios -&gt; MOPs)</text>
+<rect x="794.0" y="186.0" width="176" height="40" rx="4" fill="#FFFFFF" stroke="#B9C4C2" stroke-width="1.3"/>
+<text x="882.0" y="203.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="11.5" font-weight="600" fill="#16232B">Commissioning</text>
+<text x="882.0" y="218.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="9.5" fill="#71807F">conops.yaml (ORR)</text>
+<text x="310.0" y="500.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="10.5" letter-spacing="1.5" fill="#71807F">DECOMPOSITION</text>
+<text x="750.0" y="500.0" text-anchor="middle" font-family="Helvetica,Arial,sans-serif" font-size="10.5" letter-spacing="1.5" fill="#71807F">INTEGRATION + VERIFICATION</text>
+</svg>
