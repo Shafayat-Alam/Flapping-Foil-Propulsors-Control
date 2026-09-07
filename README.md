@@ -1,8 +1,8 @@
-# Soft Propulsors Control
+# Flex Fin
 
 `ROS 2 Jazzy` `Ubuntu 24.04` `Jetson Orin Nano` `Dynamixel Protocol 2.0`
 
-Autonomous control stack for a bio-inspired underwater vehicle: mission dispatch, reactive state-machine control, motion generation, and hardware interfacing.
+Autonomous control stack for a bio-inspired underwater vehicle: mission dispatch, reactive state-machine control, motion generation, and hardware interfacing. ROS 2 package name: `soft_propulsors_control`.
 
 ## Design Considerations
 
@@ -107,6 +107,36 @@ Search   sweep(id, rate, span)   triangle-wave scan for SCANNING state
 ```
 
 `harmonic_wave` extends the sinusoid with 2nd/3rd harmonic terms and a bias, used by `paddle_harmonic` for waveform-shape experiments without changing stroke amplitude (peak-normalized on every parameter change).
+
+## Simulation (Gazebo, Software-in-the-Loop)
+
+Three hybrid interface nodes (`gazebo_dynamixel_interface`, `gazebo_icm20948_interface`, `gazebo_stellarhd_interface`) replace the three hardware interfaces one-for-one. `crab` and `controller` publish/subscribe the exact same topic names in both modes and never know which one is running.
+
+```
+joint_cmd ──► gazebo_dynamixel_interface ──ping at startup──► real servo responds? ──► write to real bus + mirror position to Gazebo
+                                                          └──► no response? ──────────► drive Gazebo joint only
+
+feedback merge (per servo ID, every tick):
+  real servo present ──► real GroupSyncRead value
+  real servo absent  ──► Gazebo /joint_states value
+                              │
+                              ▼
+                   one joint_feedback message, same wire format either way
+```
+
+| Node | Real hardware detected via | Simulated fallback |
+|---|---|---|
+| `gazebo_dynamixel_interface` | One-shot RS-485 ping per servo ID at startup | Gazebo `JointPositionController` per joint, bridged through `ros_gz_bridge` |
+| `gazebo_icm20948_interface` | I2C open + `ICM20948` init at startup | Gazebo `/imu` passed through; magnetometer is not simulated by gz-sim, so a fixed constant vector is published instead |
+| `gazebo_stellarhd_interface` | `cv2.VideoCapture` test read at startup | Gazebo `/camera/image_raw` via `cv_bridge`, same mission-segmented recording logic as the real camera node |
+
+Detection is one-shot at node startup, not continuous. A servo ID that doesn't respond stays simulated for the life of the node; partial hardware bring-up (2 of 4 servos wired, say) needs no config change; Gazebo fills in whichever IDs aren't present.
+
+`worlds/ocean.sdf` sets gravity to `0 0 0` as a stand-in for neutral buoyancy: the vehicle floats and fin gaits drift the body. This is a kinematic sandbox, there is no buoyancy plugin and no hydrodynamic drag model, so it validates gait *logic and joint motion*, not thrust or swimming performance.
+
+```bash
+ros2 launch soft_propulsors_control gazebo_launch.py
+```
 
 ## Physical Wiring
 
@@ -268,7 +298,22 @@ No calibration yet ──► controller rejects every mission and manual command
 Serial port unplugged ──► reopened on a 2s retry timer, config replayed on reconnect
 ```
 
-## Bench and Research Tooling
+## Hardware-in-the-Loop (HIL)
 
-`load_cell_interface.py` receives a 6-axis force/torque grid over UDP (port `5005`, big-endian float32, `rows x cols` = axes x samples) from an external DAQ, used by the grey-box system identification pipeline (`force_control.py`, `motion_command.py` HIL bridge). It is not part of the autonomous mission stack; `crab` and `controller` do not subscribe to it.
+An external script joins the live ROS graph as one more node and drives the real vehicle through the same `mission_input` path a normal mission uses, it is not a separate control path. Real-world sensor data (load cell) closes the loop back to that script.
+
+```
+external script                      crab / controller              load_cell_interface
+      │  mission_input (mission line)      │                                │
+      ├───────────────────────────────────►│                                │
+      │                                     │── drives real servos ────────►│
+      │  mission_status (ACHIEVED)          │                                │
+      │◄────────────────────────────────────┤                                │
+      │  load_cell_data + joint_feedback (buffered during the run)          │
+      │◄─────────────────────────────────────────────────────────────────────┤
+```
+
+Requires three nodes running concurrently: the real (or hybrid) actuator interface, `load_cell_interface`, and the normal `crab`/`controller` mission chain. The external script joins as one more node, it does not replace or embed any of them.
+
+`load_cell_interface.py` receives a 6-axis force/torque grid over UDP (port `5005`, big-endian float32, `rows x cols` = axes x samples) from an external DAQ, and republishes it on `load_cell_data` for anything on the ROS graph to consume. It is bench/research infrastructure, not part of the autonomous mission stack; `crab` and `controller` do not subscribe to it.
 
